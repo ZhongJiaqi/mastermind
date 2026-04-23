@@ -36,6 +36,37 @@ describe('POST /api/analyze', () => {
     expect(res.status).toBe(400);
   });
 
+  it('tolerates ```json fence wrapping from the LLM', async () => {
+    vi.resetModules();
+    vi.doMock('../../api/_shared/dashscope', () => ({
+      createDashScope: () => ({
+        chat: { completions: { create: vi.fn().mockResolvedValue({
+          [Symbol.asyncIterator]: async function* () {
+            yield { choices: [{ delta: { content: '```json\n[{"advisorId":"munger","characterName":"芒格","conclusion":"不跳","reasoning":"略","mentalModels":[]}]\n```' } }] };
+          },
+        }) } },
+      }),
+      getDashScopeModels: () => ({ advisor: 'qwen3-plus', analyzer: 'qwen3-max', host: 'qwen3-plus' }),
+    }));
+    const handler = (await import('../../api/analyze')).default;
+    const req = new Request('http://test/api/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        session: { question: 'q' },
+        rounds: [{
+          advisorId: 'munger', advisorName: '芒格', content: 'x',
+          meta: { usedModels: ['逆向思考'], modelBriefs: { '逆向思考': 'brief' } },
+        }],
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await handler(req);
+    const text = await res.text();
+    expect(text).toContain('event: card');
+    expect(text).toContain('"advisorId":"munger"');
+    expect(text).not.toContain('LLM_BAD_JSON');
+  });
+
   it('streams card + done events from LLM JSON response', async () => {
     const req = new Request('http://test/api/analyze', {
       method: 'POST',

@@ -52,12 +52,15 @@ export async function loadAdvisors(root: string): Promise<AdvisorSkill[]> {
   const advisors: AdvisorSkill[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    // 下划线开头的目录（如 _fixtures）仅供测试 fixture 用，不进 vault。
+    if (entry.name.startsWith('_')) continue;
     const skillPath = path.join(root, entry.name, 'SKILL.md');
     try {
       const raw = await fs.readFile(skillPath, 'utf8');
       const parsed = matter(raw);
       advisors.push({
-        frontmatter: parsed.data as AdvisorFrontmatter,
+        // zod parse 在此处校验并拿到严格类型，而不是靠下游 validateAdvisors 兜底。
+        frontmatter: frontmatterSchema.parse(parsed.data) as AdvisorFrontmatter,
         mentalModels: parseMentalModels(parsed.content),
         quotes: parseSection(parsed.content, 'Q'),
         blindspots: parseSection(parsed.content, 'B'),
@@ -124,10 +127,22 @@ export function advisorsPlugin(options?: { root?: string; outPath?: string }): P
     },
     async handleHotUpdate(ctx) {
       if (
-        ctx.file.includes(path.sep + 'advisors' + path.sep) &&
-        ctx.file.endsWith('.md')
+        !ctx.file.includes(path.sep + 'advisors' + path.sep) ||
+        !ctx.file.endsWith('.md')
       ) {
+        return;
+      }
+      try {
         await regen();
+        // 写完 src/generated/advisors.ts 后强制浏览器全量刷新——生成文件不在默认模块图内。
+        ctx.server.hot.send({ type: 'full-reload', path: '*' });
+        return [];
+      } catch (err) {
+        ctx.server.config.logger.error(
+          `[advisors] regen failed: ${err instanceof Error ? err.message : String(err)}`,
+          { error: err instanceof Error ? err : undefined },
+        );
+        return [];
       }
     },
   };

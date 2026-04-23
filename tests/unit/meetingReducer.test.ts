@@ -84,6 +84,19 @@ describe('meetingReducer', () => {
     expect(next.session.analysis.cards).toHaveLength(1);
   });
 
+  it('ANALYSIS_ERROR moves state to meeting-done so UI can re-enable submit', () => {
+    const next = [
+      { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
+      { type: 'INTAKE_PASSED' as const },
+      { type: 'ANALYSIS_START' as const },
+      { type: 'ANALYSIS_ERROR' as const, error: 'LLM_BAD_JSON' },
+    ].reduce(meetingReducer, initialMeeting);
+    expect(next.session.state.kind).toBe('meeting-done');
+    expect(next.session.analysis.status).toBe('error');
+    expect(next.session.analysis.error).toBe('LLM_BAD_JSON');
+    expect(next.session.endedAt).toBeGreaterThan(0);
+  });
+
   it('RESET returns to idle', () => {
     const seeded = meetingReducer(initialMeeting, {
       type: 'INIT_SESSION', input: { question: 'q' }, selectedAdvisorIds: ['munger'],

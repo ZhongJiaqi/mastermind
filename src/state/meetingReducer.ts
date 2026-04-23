@@ -233,11 +233,14 @@ export function meetingReducer(
       };
 
     case 'ANALYSIS_ERROR':
+      // 同步把 kind 推到 meeting-done，否则 UI 的 isRunning 会永远为 true，按钮永锁。
       return {
         ...state,
         session: {
           ...s,
           analysis: { ...s.analysis, status: 'error', error: action.error },
+          state: { kind: 'meeting-done' },
+          endedAt: s.endedAt ?? Date.now(),
         },
       };
 

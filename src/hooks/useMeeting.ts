@@ -1,4 +1,4 @@
-import { useReducer, useRef, useCallback } from 'react';
+import { useReducer, useRef, useCallback, useEffect } from 'react';
 import type React from 'react';
 import { ADVISORS } from '../generated/advisors';
 import { meetingReducer, initialMeeting } from '../state/meetingReducer';
@@ -70,10 +70,12 @@ export function useMeeting() {
     // Sprint 4 会加真正的重试实现；MVP 里 retry 只重置状态，用户需重启会议
   }, []);
 
-  // save on meeting-done（storage 用 id 去重，容忍多次调用）
-  if (state.session.state.kind === 'meeting-done' && state.session.endedAt) {
-    saveSession(state.session);
-  }
+  // save on meeting-done（放 useEffect 避免渲染期间副作用；storage 层另有 id 去重）
+  useEffect(() => {
+    if (state.session.state.kind === 'meeting-done' && state.session.endedAt) {
+      saveSession(state.session);
+    }
+  }, [state.session.state.kind, state.session.endedAt, state.session]);
 
   return {
     state,

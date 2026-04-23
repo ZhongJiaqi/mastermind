@@ -43,11 +43,18 @@ export default async function handler(req: Request): Promise<Response> {
         const text = chunk.choices?.[0]?.delta?.content ?? '';
         buffer += text;
       }
+      // 容忍 LLM 输出被 ```json ``` fence 包裹（prompt 禁止但并不保证）。
+      const stripped = buffer
+        .trim()
+        .replace(/^```(?:json)?\s*\n?/i, '')
+        .replace(/\n?```\s*$/i, '')
+        .trim();
       let cards: unknown[];
       try {
-        cards = JSON.parse(buffer.trim()) as unknown[];
+        cards = JSON.parse(stripped) as unknown[];
       } catch {
-        write('error', { code: 'LLM_BAD_JSON', message: 'Analyst returned invalid JSON', raw: buffer });
+        // 不把原始 buffer 回显给客户端——可能含 prompt 泄露或敏感推理过程。
+        write('error', { code: 'LLM_BAD_JSON', message: 'Analyst returned invalid JSON' });
         close();
         return;
       }
