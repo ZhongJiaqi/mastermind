@@ -58,21 +58,15 @@ export function devApiPlugin(): Plugin {
         const host = `http://${nodeReq.headers.host ?? 'localhost:3000'}`;
 
         try {
-          const advisorMatch = pathOnly.match(/^\/api\/advisor\/([^/]+)$/);
           let modPath: string | null = null;
-          let params: Record<string, string> | undefined;
           if (pathOnly === '/api/intake-clarify') modPath = '/api/intake-clarify.ts';
-          else if (pathOnly === '/api/analyze') modPath = '/api/analyze.ts';
-          else if (advisorMatch) {
-            modPath = '/api/advisor/[id].ts';
-            params = { id: decodeURIComponent(advisorMatch[1]) };
-          }
+          else if (pathOnly === '/api/council') modPath = '/api/council.ts';
           if (!modPath) return next();
 
           const mod = await server.ssrLoadModule(modPath);
           const handler = mod.default as EdgeHandler;
           const webReq = await nodeReqToWebRequest(nodeReq, host);
-          const webRes = await handler(webReq, params ? { params } : undefined);
+          const webRes = await handler(webReq);
           return webResponseToNodeRes(webRes, nodeRes);
         } catch (err) {
           console.error('[dev-api] error on', pathOnly, err);

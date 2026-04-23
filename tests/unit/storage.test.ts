@@ -8,9 +8,8 @@ function makeSession(id: string): DecisionSession {
     id,
     startedAt: Date.now(),
     input: { question: 'q' },
-    clarifications: [],
     selectedAdvisorIds: ['munger'],
-    rounds: [],
+    messages: [],
     analysis: { status: 'idle', cards: [] },
     state: { kind: 'idle' },
   };

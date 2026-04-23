@@ -5,21 +5,11 @@ export interface DecisionSessionInput {
   leaning?: string;
 }
 
-export interface Clarification {
+export interface DiscussionMessage {
   id: string;
-  question: string;
-  why: string;
-  answer: string;
-}
-
-export interface AdvisorRound {
-  advisorId: string;
-  advisorName: string;
-  content: string;           // stripped（显示用）
-  fullText: string;          // 含 meta（传给 analyze 用）
-  status: 'pending' | 'streaming' | 'done' | 'error';
-  error?: string;
-  meta: { usedModels: string[]; modelBriefs: Record<string, string> };
+  advisorId: string;   // '' 若 parser 未匹配到 vault 中的 advisor
+  advisorName: string; // 显示名（匹配到则为 frontmatter.name，否则原 speaker）
+  text: string;
 }
 
 export interface DecisionCard {
@@ -39,7 +29,6 @@ export interface AnalysisState {
 
 export type MeetingState =
   | { kind: 'idle' }
-  | { kind: 'clarify-pending'; questions: Clarification[] }
   | { kind: 'meeting-running' }
   | { kind: 'meeting-done' };
 
@@ -48,9 +37,8 @@ export interface DecisionSession {
   startedAt: number;
   endedAt?: number;
   input: DecisionSessionInput;
-  clarifications: Clarification[];
   selectedAdvisorIds: string[];
-  rounds: AdvisorRound[];
+  messages: DiscussionMessage[];
   analysis: AnalysisState;
   state: MeetingState;
 }

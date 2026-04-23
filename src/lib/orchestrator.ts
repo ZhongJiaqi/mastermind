@@ -1,130 +1,78 @@
 import { openSseStream } from './sseClient';
-import { stripMetaBlock, parseMetaBlock } from './meta';
-import type { AdvisorRound, DecisionCard, DecisionSessionInput, Clarification } from '../types/session';
+import { parseCouncilStream } from './councilParser';
+import type {
+  DecisionCard,
+  DecisionSessionInput,
+  DiscussionMessage,
+} from '../types/session';
 
-export interface OrchestratorCallbacks {
-  onRoundStart: (advisorId: string) => void;
-  onRoundChunk: (advisorId: string, text: string) => void;
-  onRoundDone: (advisorId: string, payload: { displayText: string; fullText: string; meta: AdvisorRound['meta'] }) => void;
-  onRoundError: (advisorId: string, error: string) => void;
-  onAnalysisStart: () => void;
-  onAnalysisCard: (card: DecisionCard) => void;
-  onAnalysisDone: () => void;
-  onAnalysisError: (error: string) => void;
+export interface CouncilCallbacks {
+  onDiscussionUpdate: (messages: DiscussionMessage[]) => void;
+  onConclusionsUpdate: (cards: DecisionCard[]) => void;
+  onDone: () => void;
+  onError: (error: string) => void;
 }
 
-export interface OrchestrateParams {
-  session: { input: DecisionSessionInput; clarifications: Clarification[] };
-  advisors: Array<{ id: string; name: string }>;
-  cb: OrchestratorCallbacks;
+export interface RunCouncilParams {
+  input: DecisionSessionInput;
+  selectedAdvisorIds: string[];
+  cb: CouncilCallbacks;
   signal?: AbortSignal;
 }
 
-interface PriorRound {
-  advisorId: string;
-  advisorName: string;
-  content: string;
-  meta: AdvisorRound['meta'];
-}
-
-// SSE 事件 payload 的 discriminated union —— 避免在消费端到处 any。
-type AdvisorSseEvent =
+type CouncilSseEvent =
   | { event: 'chunk'; data: { text: string } }
-  | { event: 'done'; data: { displayText?: string; fullText?: string; meta?: AdvisorRound['meta'] } }
-  | { event: 'error'; data: { message?: string; code?: string } };
-
-type AnalyzeSseEvent =
-  | { event: 'card'; data: DecisionCard }
-  | { event: 'done'; data: { cards: DecisionCard[] } }
+  | { event: 'done'; data: { fullText?: string } }
   | { event: 'error'; data: { message?: string; code?: string } };
 
 function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
-export async function runMeeting(p: OrchestrateParams): Promise<void> {
-  const priorRounds: PriorRound[] = [];
+/**
+ * 单次 POST /api/council + 流式 parse。
+ *
+ * 每个 chunk 到达后重新 parse 整段 fullText（parser 对不完整的块耐受，返回
+ * 当前能识别的 messages + 若 <conclusions> 已闭合则的 cards）。UI 层用
+ * immutable replace（不是 append），避免 streaming 时重复条目。
+ */
+export async function runMeeting(p: RunCouncilParams): Promise<void> {
+  let fullText = '';
+  let lastCardsKey = '';
 
-  // 失败隔离（spec §3.2）：一位军师失败时记录错误并进入下一位，不中断整场。
-  // 出错军师不进入 priorRounds，后续军师看不到其发言。这是有意设计。
-  for (const advisor of p.advisors) {
-    if (p.signal?.aborted) return;
-    p.cb.onRoundStart(advisor.id);
-    let accumulated = '';
-
-    try {
-      for await (const evt of openSseStream<AdvisorSseEvent['data']>({
-        url: `/api/advisor/${advisor.id}`,
-        body: {
-          session: {
-            ...p.session.input,
-            clarifications: p.session.clarifications.map((c) => ({
-              question: c.question,
-              answer: c.answer,
-            })),
-          },
-          // content 是 displayText（已 strip meta），下一位军师不该看到 meta 标签。
-          priorRounds: priorRounds.map((r) => ({
-            advisorId: r.advisorId,
-            advisorName: r.advisorName,
-            content: r.content,
-          })),
-        },
-        signal: p.signal,
-      })) {
-        const typed = evt as AdvisorSseEvent;
-        if (typed.event === 'chunk') {
-          p.cb.onRoundChunk(advisor.id, typed.data.text);
-          accumulated += typed.data.text;
-        } else if (typed.event === 'done') {
-          const displayText = typed.data.displayText ?? stripMetaBlock(accumulated);
-          const fullText = typed.data.fullText ?? accumulated;
-          const meta = typed.data.meta ?? parseMetaBlock(accumulated);
-          p.cb.onRoundDone(advisor.id, { displayText, fullText, meta });
-          priorRounds.push({ advisorId: advisor.id, advisorName: advisor.name, content: displayText, meta });
-        } else if (typed.event === 'error') {
-          p.cb.onRoundError(advisor.id, typed.data.message ?? 'stream error');
-          break;
-        }
-      }
-    } catch (err: unknown) {
-      if (isAbortError(err)) return;
-      p.cb.onRoundError(
-        advisor.id,
-        err instanceof Error ? err.message : 'network error',
-      );
-    }
-  }
-
-  if (p.signal?.aborted) return;
-
-  // Analysis phase
-  p.cb.onAnalysisStart();
   try {
-    for await (const evt of openSseStream<AnalyzeSseEvent['data']>({
-      url: '/api/analyze',
+    for await (const evt of openSseStream<CouncilSseEvent['data']>({
+      url: '/api/council',
       body: {
-        session: p.session.input,
-        rounds: priorRounds.map((r) => ({
-          advisorId: r.advisorId,
-          advisorName: r.advisorName,
-          content: r.content,
-          meta: r.meta,
-        })),
+        session: p.input,
+        selectedAdvisorIds: p.selectedAdvisorIds,
       },
       signal: p.signal,
     })) {
-      const typed = evt as AnalyzeSseEvent;
-      if (typed.event === 'card') {
-        p.cb.onAnalysisCard(typed.data);
+      const typed = evt as CouncilSseEvent;
+      if (typed.event === 'chunk') {
+        fullText += typed.data.text;
+        const parsed = parseCouncilStream(fullText);
+        p.cb.onDiscussionUpdate(parsed.messages);
+        if (parsed.cards) {
+          const key = JSON.stringify(parsed.cards);
+          if (key !== lastCardsKey) {
+            p.cb.onConclusionsUpdate(parsed.cards);
+            lastCardsKey = key;
+          }
+        }
       } else if (typed.event === 'done') {
-        p.cb.onAnalysisDone();
+        const text = typed.data.fullText ?? fullText;
+        const final = parseCouncilStream(text);
+        p.cb.onDiscussionUpdate(final.messages);
+        if (final.cards) p.cb.onConclusionsUpdate(final.cards);
+        p.cb.onDone();
       } else if (typed.event === 'error') {
-        p.cb.onAnalysisError(typed.data.message ?? 'analyze error');
+        p.cb.onError(typed.data.message ?? 'council error');
       }
     }
   } catch (err: unknown) {
     if (isAbortError(err)) return;
-    p.cb.onAnalysisError(err instanceof Error ? err.message : 'network error');
+    p.cb.onError(err instanceof Error ? err.message : 'network error');
   }
 }

@@ -6,8 +6,7 @@ const projectRoot = path.resolve(__dirname, '..', '..');
 
 const EDGE_ENTRIES = [
   'api/intake-clarify.ts',
-  'api/advisor/[id].ts',
-  'api/analyze.ts',
+  'api/council.ts',
 ];
 
 describe('edge function bundling', () => {

@@ -34,6 +34,11 @@ export const intakeClarifyRequestSchema = sessionInputSchema.extend({
   selectedAdvisorIds: z.array(z.string().max(64)).min(1).max(ADVISOR_IDS_MAX),
 });
 
+export const councilRequestSchema = z.object({
+  session: sessionInputSchema,
+  selectedAdvisorIds: z.array(z.string().max(64)).min(1).max(ADVISOR_IDS_MAX),
+});
+
 export const priorRoundSchema = z.object({
   advisorId: z.string().max(64),
   advisorName: z.string().max(64),
@@ -69,3 +74,4 @@ export const analyzeRequestSchema = z.object({
 export type IntakeClarifyRequest = z.infer<typeof intakeClarifyRequestSchema>;
 export type AdvisorRequest = z.infer<typeof advisorRequestSchema>;
 export type AnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
+export type CouncilRequest = z.infer<typeof councilRequestSchema>;

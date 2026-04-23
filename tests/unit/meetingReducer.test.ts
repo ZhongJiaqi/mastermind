@@ -13,83 +13,95 @@ describe('meetingReducer', () => {
     expect(next.session.selectedAdvisorIds).toEqual(['munger']);
     expect(next.session.id).toBeTruthy();
     expect(next.session.startedAt).toBeGreaterThan(0);
+    expect(next.session.messages).toEqual([]);
+    expect(next.session.analysis.cards).toEqual([]);
   });
 
-  it('INTAKE_NEEDED moves to clarify-pending with questions', () => {
-    const seeded = meetingReducer(initialMeeting, {
-      type: 'INIT_SESSION', input: { question: 'q' }, selectedAdvisorIds: ['munger'],
-    });
-    const next = meetingReducer(seeded, {
-      type: 'INTAKE_NEEDED',
-      questions: [{ id: '1', question: '预算多少?', why: '影响方案', answer: '' }],
-    });
-    expect(next.session.state.kind).toBe('clarify-pending');
-    if (next.session.state.kind === 'clarify-pending') {
-      expect(next.session.state.questions).toHaveLength(1);
-    }
-  });
-
-  it('INTAKE_PASSED moves directly to meeting-running', () => {
-    const seeded = meetingReducer(initialMeeting, {
-      type: 'INIT_SESSION', input: { question: 'q' }, selectedAdvisorIds: ['munger'],
-    });
-    const next = meetingReducer(seeded, { type: 'INTAKE_PASSED' });
+  it('MEETING_STARTED flips state to meeting-running and resets messages', () => {
+    const seeded = [
+      { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
+      {
+        type: 'DISCUSSION_UPDATE' as const,
+        messages: [{ id: 'old', advisorId: 'munger', advisorName: '芒格', text: 'stale' }],
+      },
+    ].reduce(meetingReducer, initialMeeting);
+    const next = meetingReducer(seeded, { type: 'MEETING_STARTED' });
     expect(next.session.state.kind).toBe('meeting-running');
+    expect(next.session.analysis.status).toBe('streaming');
+    expect(next.session.messages).toEqual([]);
   });
 
-  it('ROUND_START sets advisor status to streaming', () => {
+  it('DISCUSSION_UPDATE replaces the full messages array (not append)', () => {
     const seeded = meetingReducer(initialMeeting, {
-      type: 'INIT_SESSION', input: { question: 'q' }, selectedAdvisorIds: ['munger', 'buffett'],
+      type: 'INIT_SESSION',
+      input: { question: 'q' },
+      selectedAdvisorIds: ['munger', 'buffett'],
     });
-    const running = meetingReducer(seeded, { type: 'INTAKE_PASSED' });
-    const next = meetingReducer(running, { type: 'ROUND_START', advisorId: 'munger' });
-    const round = next.session.rounds.find((r) => r.advisorId === 'munger');
-    expect(round?.status).toBe('streaming');
+    const m1 = meetingReducer(seeded, {
+      type: 'DISCUSSION_UPDATE',
+      messages: [{ id: '1', advisorId: 'munger', advisorName: '芒格', text: 'a' }],
+    });
+    const m2 = meetingReducer(m1, {
+      type: 'DISCUSSION_UPDATE',
+      messages: [
+        { id: '1', advisorId: 'munger', advisorName: '芒格', text: 'a' },
+        { id: '2', advisorId: 'buffett', advisorName: '巴菲特', text: 'b' },
+      ],
+    });
+    expect(m2.session.messages).toHaveLength(2);
+    expect(m2.session.messages[1].text).toBe('b');
   });
 
-  it('ROUND_APPEND accumulates chunks', () => {
-    const after = [
+  it('CONCLUSIONS_UPDATE sets analysis.cards without touching state.kind', () => {
+    const seeded = [
       { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
-      { type: 'INTAKE_PASSED' as const },
-      { type: 'ROUND_START' as const, advisorId: 'munger' },
-      { type: 'ROUND_APPEND' as const, advisorId: 'munger', text: 'hello ' },
-      { type: 'ROUND_APPEND' as const, advisorId: 'munger', text: 'world' },
+      { type: 'MEETING_STARTED' as const },
     ].reduce(meetingReducer, initialMeeting);
-    expect(after.session.rounds[0].content).toBe('hello world');
+    const next = meetingReducer(seeded, {
+      type: 'CONCLUSIONS_UPDATE',
+      cards: [
+        {
+          advisorId: 'munger',
+          characterName: '芒格',
+          conclusion: '不换',
+          reasoning: 'r',
+          mentalModels: [{ name: '逆向思考', briefOfUsage: 'b' }],
+        },
+      ],
+    });
+    expect(next.session.state.kind).toBe('meeting-running');
+    expect(next.session.analysis.cards).toHaveLength(1);
+    expect(next.session.analysis.status).toBe('streaming');
   });
 
-  it('ROUND_DONE captures meta and marks status done', () => {
-    const after = [
-      { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
-      { type: 'INTAKE_PASSED' as const },
-      { type: 'ROUND_START' as const, advisorId: 'munger' },
-      { type: 'ROUND_DONE' as const, advisorId: 'munger', displayText: 'hi', fullText: 'hi<meta>...</meta>', meta: { usedModels: ['逆向思考'], modelBriefs: { '逆向思考': 'x' } } },
-    ].reduce(meetingReducer, initialMeeting);
-    const r = after.session.rounds[0];
-    expect(r.status).toBe('done');
-    expect(r.content).toBe('hi');
-    expect(r.meta.usedModels).toEqual(['逆向思考']);
-  });
-
-  it('ANALYSIS_DONE moves state to meeting-done', () => {
+  it('MEETING_DONE transitions to meeting-done with analysis=done', () => {
     const next = [
       { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
-      { type: 'INTAKE_PASSED' as const },
-      { type: 'ANALYSIS_START' as const },
-      { type: 'ANALYSIS_CARD' as const, card: { advisorId: 'munger', characterName: '芒格', conclusion: 'no', reasoning: 'r', mentalModels: [] } },
-      { type: 'ANALYSIS_DONE' as const },
+      { type: 'MEETING_STARTED' as const },
+      {
+        type: 'CONCLUSIONS_UPDATE' as const,
+        cards: [
+          {
+            advisorId: 'munger',
+            characterName: '芒格',
+            conclusion: 'x',
+            reasoning: 'r',
+            mentalModels: [],
+          },
+        ],
+      },
+      { type: 'MEETING_DONE' as const },
     ].reduce(meetingReducer, initialMeeting);
     expect(next.session.state.kind).toBe('meeting-done');
     expect(next.session.analysis.status).toBe('done');
-    expect(next.session.analysis.cards).toHaveLength(1);
+    expect(next.session.endedAt).toBeGreaterThan(0);
   });
 
-  it('ANALYSIS_ERROR moves state to meeting-done so UI can re-enable submit', () => {
+  it('MEETING_ERROR transitions to meeting-done so submit can re-enable', () => {
     const next = [
       { type: 'INIT_SESSION' as const, input: { question: 'q' }, selectedAdvisorIds: ['munger'] },
-      { type: 'INTAKE_PASSED' as const },
-      { type: 'ANALYSIS_START' as const },
-      { type: 'ANALYSIS_ERROR' as const, error: 'LLM_BAD_JSON' },
+      { type: 'MEETING_STARTED' as const },
+      { type: 'MEETING_ERROR' as const, error: 'LLM_BAD_JSON' },
     ].reduce(meetingReducer, initialMeeting);
     expect(next.session.state.kind).toBe('meeting-done');
     expect(next.session.analysis.status).toBe('error');
@@ -99,7 +111,9 @@ describe('meetingReducer', () => {
 
   it('RESET returns to idle', () => {
     const seeded = meetingReducer(initialMeeting, {
-      type: 'INIT_SESSION', input: { question: 'q' }, selectedAdvisorIds: ['munger'],
+      type: 'INIT_SESSION',
+      input: { question: 'q' },
+      selectedAdvisorIds: ['munger'],
     });
     const next = meetingReducer(seeded, { type: 'RESET' });
     expect(next).toEqual(initialMeeting);

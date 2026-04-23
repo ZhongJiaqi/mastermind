@@ -1,4 +1,8 @@
-import type { DecisionSession, Clarification, AdvisorRound, DecisionCard } from '../types/session';
+import type {
+  DecisionSession,
+  DiscussionMessage,
+  DecisionCard,
+} from '../types/session';
 
 export interface MeetingContainer {
   session: DecisionSession;
@@ -10,9 +14,8 @@ function emptySession(): DecisionSession {
     id: '',
     startedAt: 0,
     input: { question: '' },
-    clarifications: [],
     selectedAdvisorIds: [],
-    rounds: [],
+    messages: [],
     analysis: { status: 'idle', cards: [] },
     state: { kind: 'idle' },
   };
@@ -27,44 +30,12 @@ export type MeetingAction =
   | { type: 'SET_INPUT'; patch: Partial<DecisionSession['input']> }
   | { type: 'TOGGLE_ADVISOR'; id: string }
   | { type: 'RANDOMIZE_ADVISORS'; ids: string[] }
-  | { type: 'INTAKE_NEEDED'; questions: Clarification[] }
-  | { type: 'INTAKE_PASSED' }
-  | { type: 'SET_CLARIFICATION_ANSWER'; id: string; answer: string }
-  | { type: 'SUBMIT_CLARIFICATIONS'; answers: Record<string, string> }
-  | { type: 'ROUND_START'; advisorId: string }
-  | { type: 'ROUND_APPEND'; advisorId: string; text: string }
-  | { type: 'ROUND_DONE'; advisorId: string; displayText: string; fullText: string; meta: AdvisorRound['meta'] }
-  | { type: 'ROUND_ERROR'; advisorId: string; error: string }
-  | { type: 'ROUND_RETRY'; advisorId: string }
-  | { type: 'ANALYSIS_START' }
-  | { type: 'ANALYSIS_CARD'; card: DecisionCard }
-  | { type: 'ANALYSIS_DONE' }
-  | { type: 'ANALYSIS_ERROR'; error: string }
+  | { type: 'MEETING_STARTED' }
+  | { type: 'DISCUSSION_UPDATE'; messages: DiscussionMessage[] }
+  | { type: 'CONCLUSIONS_UPDATE'; cards: DecisionCard[] }
+  | { type: 'MEETING_DONE' }
+  | { type: 'MEETING_ERROR'; error: string }
   | { type: 'RESET' };
-
-function upsertRound(
-  rounds: AdvisorRound[],
-  advisorId: string,
-  patch: Partial<AdvisorRound>,
-): AdvisorRound[] {
-  const idx = rounds.findIndex((r) => r.advisorId === advisorId);
-  const base: AdvisorRound =
-    idx >= 0
-      ? rounds[idx]
-      : {
-          advisorId,
-          advisorName: advisorId,
-          content: '',
-          fullText: '',
-          status: 'pending',
-          meta: { usedModels: [], modelBriefs: {} },
-        };
-  const next = { ...base, ...patch };
-  if (idx >= 0) {
-    return rounds.map((r, i) => (i === idx ? next : r));
-  }
-  return [...rounds, next];
-}
 
 export function meetingReducer(
   state: MeetingContainer,
@@ -88,7 +59,10 @@ export function meetingReducer(
       };
 
     case 'SET_INPUT':
-      return { ...state, session: { ...s, input: { ...s.input, ...action.patch } } };
+      return {
+        ...state,
+        session: { ...s, input: { ...s.input, ...action.patch } },
+      };
 
     case 'TOGGLE_ADVISOR': {
       const isSelected = s.selectedAdvisorIds.includes(action.id);
@@ -101,145 +75,48 @@ export function meetingReducer(
     case 'RANDOMIZE_ADVISORS':
       return { ...state, session: { ...s, selectedAdvisorIds: action.ids } };
 
-    case 'INTAKE_NEEDED':
+    case 'MEETING_STARTED':
       return {
         ...state,
         session: {
           ...s,
-          clarifications: action.questions,
-          state: { kind: 'clarify-pending', questions: action.questions },
-        },
-      };
-
-    case 'INTAKE_PASSED':
-      return { ...state, session: { ...s, state: { kind: 'meeting-running' } } };
-
-    case 'SET_CLARIFICATION_ANSWER': {
-      const updatedClarifications = s.clarifications.map((c) =>
-        c.id === action.id ? { ...c, answer: action.answer } : c,
-      );
-      return {
-        ...state,
-        session: {
-          ...s,
-          clarifications: updatedClarifications,
-          state:
-            s.state.kind === 'clarify-pending'
-              ? { kind: 'clarify-pending', questions: updatedClarifications }
-              : s.state,
-        },
-      };
-    }
-
-    case 'SUBMIT_CLARIFICATIONS':
-      return {
-        ...state,
-        session: {
-          ...s,
-          clarifications: s.clarifications.map((c) => ({
-            ...c,
-            answer: action.answers[c.id] ?? c.answer,
-          })),
           state: { kind: 'meeting-running' },
+          analysis: { status: 'streaming', cards: [] },
+          messages: [],
         },
       };
 
-    case 'ROUND_START':
+    case 'DISCUSSION_UPDATE':
+      return { ...state, session: { ...s, messages: action.messages } };
+
+    case 'CONCLUSIONS_UPDATE':
       return {
         ...state,
         session: {
           ...s,
-          rounds: upsertRound(s.rounds, action.advisorId, { status: 'streaming' }),
+          analysis: { ...s.analysis, cards: action.cards },
         },
       };
 
-    case 'ROUND_APPEND': {
-      const existing = s.rounds.find((r) => r.advisorId === action.advisorId);
-      const content = (existing?.content ?? '') + action.text;
+    case 'MEETING_DONE':
       return {
         ...state,
         session: {
           ...s,
-          rounds: upsertRound(s.rounds, action.advisorId, { content, status: 'streaming' }),
-        },
-      };
-    }
-
-    case 'ROUND_DONE':
-      return {
-        ...state,
-        session: {
-          ...s,
-          rounds: upsertRound(s.rounds, action.advisorId, {
-            content: action.displayText,
-            fullText: action.fullText,
-            meta: action.meta,
-            status: 'done',
-          }),
-        },
-      };
-
-    case 'ROUND_ERROR':
-      return {
-        ...state,
-        session: {
-          ...s,
-          rounds: upsertRound(s.rounds, action.advisorId, {
-            status: 'error',
-            error: action.error,
-          }),
-        },
-      };
-
-    case 'ROUND_RETRY':
-      return {
-        ...state,
-        session: {
-          ...s,
-          rounds: upsertRound(s.rounds, action.advisorId, {
-            status: 'pending',
-            error: undefined,
-            content: '',
-            fullText: '',
-            meta: { usedModels: [], modelBriefs: {} },
-          }),
-        },
-      };
-
-    case 'ANALYSIS_START':
-      return {
-        ...state,
-        session: { ...s, analysis: { status: 'streaming', cards: [] } },
-      };
-
-    case 'ANALYSIS_CARD':
-      return {
-        ...state,
-        session: {
-          ...s,
-          analysis: { ...s.analysis, cards: [...s.analysis.cards, action.card] },
-        },
-      };
-
-    case 'ANALYSIS_DONE':
-      return {
-        ...state,
-        session: {
-          ...s,
-          analysis: { ...s.analysis, status: 'done' },
           state: { kind: 'meeting-done' },
+          analysis: { ...s.analysis, status: 'done' },
           endedAt: Date.now(),
         },
       };
 
-    case 'ANALYSIS_ERROR':
-      // 同步把 kind 推到 meeting-done，否则 UI 的 isRunning 会永远为 true，按钮永锁。
+    case 'MEETING_ERROR':
+      // 同步 state.kind 到 meeting-done，让 UI 的 isRunning 归位、按钮解锁。
       return {
         ...state,
         session: {
           ...s,
-          analysis: { ...s.analysis, status: 'error', error: action.error },
           state: { kind: 'meeting-done' },
+          analysis: { ...s.analysis, status: 'error', error: action.error },
           endedAt: s.endedAt ?? Date.now(),
         },
       };

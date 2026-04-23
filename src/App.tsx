@@ -13,13 +13,12 @@ import {
   Dices,
 } from 'lucide-react';
 import { useMeeting } from './hooks/useMeeting';
-import { stripMetaBlockStreaming } from './lib/meta';
-import type { AdvisorRound, DecisionCard } from './types/session';
+import type { DiscussionMessage, DecisionCard } from './types/session';
 
 export default function App() {
   const { state, start, reset } = useMeeting();
   const session = state.session;
-  const rounds = session.rounds;
+  const messages = session.messages;
   const cards = session.analysis.cards;
 
   const [question, setQuestion] = useState('');
@@ -27,10 +26,8 @@ export default function App() {
   const [localError, setLocalError] = useState<string | null>(null);
 
   const isRunning = session.state.kind === 'meeting-running';
-  const isDone = session.state.kind === 'meeting-done';
-  const hasContent = rounds.length > 0 || cards.length > 0;
-  const roundError = rounds.find((r) => r.status === 'error')?.error;
-  const displayError = localError || roundError || session.analysis.error;
+  const hasContent = messages.length > 0 || cards.length > 0;
+  const displayError = localError || session.analysis.error;
 
   const toggleAdvisor = (id: string) => {
     setSelectedIds((prev) =>
@@ -175,10 +172,10 @@ export default function App() {
               <EmptyState />
             ) : (
               <div className="space-y-8">
-                {rounds.length > 0 && <Discussion rounds={rounds} />}
+                {messages.length > 0 && <Discussion messages={messages} />}
                 {cards.length > 0 && <Results cards={cards} />}
                 {isRunning && cards.length === 0 && (
-                  <LoadingHint hasRounds={rounds.length > 0} />
+                  <LoadingHint hasMessages={messages.length > 0} />
                 )}
               </div>
             )}
@@ -200,7 +197,7 @@ function EmptyState() {
   );
 }
 
-function Discussion({ rounds }: { rounds: AdvisorRound[] }) {
+function Discussion({ messages }: { messages: DiscussionMessage[] }) {
   return (
     <div className="mb-8 space-y-4">
       <h3 className="text-lg font-bold flex items-center gap-2 text-stone-800">
@@ -208,33 +205,25 @@ function Discussion({ rounds }: { rounds: AdvisorRound[] }) {
         智囊团讨论中...
       </h3>
       <div className="space-y-4 bg-stone-50 rounded-2xl p-5 border border-stone-200">
-        {rounds.map((round) => {
-          const advisor = ADVISORS.find((a) => a.frontmatter.id === round.advisorId);
-          const name = advisor?.frontmatter.name ?? round.advisorId;
-          const color = ADVISOR_COLORS[round.advisorId] ?? DEFAULT_ADVISOR_COLOR;
-
+        {messages.map((msg) => {
+          const color = ADVISOR_COLORS[msg.advisorId] ?? DEFAULT_ADVISOR_COLOR;
           return (
             <motion.div
-              key={round.advisorId}
+              key={msg.id}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="flex flex-col gap-1"
+              data-role="discussion-message"
+              data-advisor-id={msg.advisorId}
             >
               <span
                 className={`text-xs font-bold px-2 py-0.5 rounded-md w-fit border ${color}`}
               >
-                {name}
+                {msg.advisorName}
               </span>
-              {round.status === 'error' ? (
-                <p className="text-sm text-red-600 leading-relaxed pl-1">
-                  （出错：{round.error ?? '未知错误'}）
-                </p>
-              ) : (
-                <p className="text-sm text-stone-700 leading-relaxed pl-1 whitespace-pre-wrap">
-                  {stripMetaBlockStreaming(round.content) ||
-                    (round.status === 'streaming' ? '（正在思考...）' : '')}
-                </p>
-              )}
+              <p className="text-sm text-stone-700 leading-relaxed pl-1 whitespace-pre-wrap">
+                {msg.text}
+              </p>
             </motion.div>
           );
         })}
@@ -343,7 +332,7 @@ function Divider() {
   return <div className="w-full h-px bg-stone-100" />;
 }
 
-function LoadingHint({ hasRounds }: { hasRounds: boolean }) {
+function LoadingHint({ hasMessages }: { hasMessages: boolean }) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -352,7 +341,7 @@ function LoadingHint({ hasRounds }: { hasRounds: boolean }) {
     >
       <Loader2 size={32} className="text-stone-300 animate-spin" />
       <p className="text-sm text-stone-500 font-medium animate-pulse">
-        {hasRounds ? '正在总结最终建议...' : '正在推演决策逻辑...'}
+        {hasMessages ? '正在总结最终建议...' : '正在召集军师...'}
       </p>
     </motion.div>
   );
