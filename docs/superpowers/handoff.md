@@ -337,3 +337,68 @@ Dev server 当前在 background（task id `bk5gnbu50`），env 覆盖 `MODEL_*=q
 ---
 
 **二轮交接完成。工作目录待 commit（有新文件 + 8 个修改）。56 tests 全绿。等待用户决定下一步。**
+
+---
+
+## 2026-04-24 凌晨 · 架构回滚为单次圆桌（council）
+
+用户反馈：N 次独立调用 + 每人 1 次发言失去了原项目的"AI 自导自演"动态碰撞感。按原项目 `ZhongJiaqi/mastermind` main 分支的单次 LLM 调用扮多人架构重写，但保留 spec v5.4 的心智模型 vault 和结构化决策卡。
+
+Plan 记录：`~/.claude/plans/ai-ai-fancy-glade.md`
+
+### 架构变化
+
+- **新增** `api/council.ts`：单次 qwen3-max SSE 调用，一次 prompt 注入所有选中军师的完整 M/Q/B/S，要求输出 `<discussion>` 块（每行 `人名: 内容`，AI 自由决定谁说几次）+ `<conclusions>` JSON（per-character 决策卡，mentalModels 从各自 M 段目录选）。
+- **新增** `src/lib/councilParser.ts`：每个 SSE chunk 到达后重新 parse 整段 fullText，`<discussion>` 容忍未闭合（流式中段），`<conclusions>` 需闭合才 parse。含 `resolveAdvisor` fuzzy name match（"芒格" → "查理·芒格"）。
+- **重写** `src/lib/orchestrator.ts`：单次 POST + 流式 parse，每 chunk dispatch `DISCUSSION_UPDATE` / `CONCLUSIONS_UPDATE`。
+- **重写** `src/state/meetingReducer.ts`：删 `ROUND_*` actions，加 `MEETING_STARTED / DISCUSSION_UPDATE / CONCLUSIONS_UPDATE / MEETING_DONE / MEETING_ERROR`。`MEETING_ERROR` 同步把 `state.kind` 推到 `meeting-done` 让按钮解锁。
+- **重写** `src/App.tsx` 的 `Discussion` 组件：从 per-advisor card 改为聊天气泡流（`messages.map`），同一人可多条相邻消息，每条加 `data-role="discussion-message"` + `data-advisor-id` 方便 E2E 量化检查。
+- **删除**：`api/advisor/[id].ts` / `api/analyze.ts` / `api/_shared/prompts/{advisor,analyze}.ts` / `src/lib/meta.ts`（meta 机制不再需要）/ 对应 tests。
+- **调整** `vite-plugins/dev-api.ts` router：只剩 `/api/intake-clarify` + `/api/council`。
+
+### 主动放弃的能力（已确认 tradeoffs）
+
+1. Analyst 独立校验层
+2. 失败隔离（一次调用失败整场废）
+3. `<meta>` 自报机制
+4. per-advisor 流式卡（改为聊天气泡流）
+
+### 验证
+
+- **本地**：选曹操+特朗普+张小龙跑"职业决策"，产出 **11 条 messages**（曹操 5 / 特朗普 3 / 张小龙 3），speaker order `曹操-曹操-特朗普-张小龙-曹操-特朗普-张小龙-曹操-特朗普-张小龙-曹操`——曹操激进多次打断 ✅
+- **线上**（`mastermind-gamma-weld.vercel.app` commit `f1d61ea`）：同样场景产出 **9 条 messages**（每人 3 次），内容互相呼应；特朗普连发英文 bravado、曹操文言引《求贤令》、张小龙反问从用户视角，0 console error，0 meta leak ✅
+
+### 量化 E2E 检查（Playwright）
+
+```js
+browser_evaluate(() => {
+  const nodes = document.querySelectorAll('[data-role="discussion-message"]');
+  const per = {};
+  nodes.forEach((n) => { per[n.dataset.advisorId] = (per[n.dataset.advisorId] || 0) + 1; });
+  return { total: nodes.length, per, hasMultiSpeakRound: Object.values(per).some((n) => n >= 2) };
+});
+// 期望 hasMultiSpeakRound === true
+```
+
+### 命令可复现状态
+
+```bash
+npm run lint   # 0 错
+npm run test   # 11 files / 48 tests
+npm run build  # 147.7 kB gzipped JS
+```
+
+### 已知迭代点（Sprint 5 候选）
+
+- qwen3-max 倾向**均匀分配发言次数**——本地偶尔能涌现"曹操 5 次"这种不均衡，线上更倾向 round-robin。如果想要性格驱动的极端不均，prompt 可以再加强"次数应由性格驱动，不是均匀分配"。
+- 最后一位军师**甄嬛**仍未起草（3/4 Claude-draft 完成）。
+- Sprint 4 剩余：移动端 responsive / 错误态 UI 打磨 / rate limiting。
+
+### Git 历史（最新 → 早）
+
+- `f1d61ea` feat(arch): single-call council for dynamic debate dynamics
+- `9e0a5d9` fix(ui): strip <meta> during streaming
+- `4fb65d3` chore(ui): page title + favicon
+- `8e67fcb` fix: address HIGH findings from review
+- `e56b997` fix(arch): virtual:advisors → generated file + restore UI
+- ...
