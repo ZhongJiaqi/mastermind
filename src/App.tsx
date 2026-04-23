@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { CHARACTERS, SCENARIOS } from './constants';
+import { SCENARIOS } from './constants';
+import { ADVISORS } from 'virtual:advisors';
 import { BrainCircuit, Sparkles, User, Dices } from 'lucide-react';
 
 export default function App() {
@@ -20,8 +21,8 @@ export default function App() {
   const handleRandomSelect = () => {
     // Pick 2 to 4 random characters
     const count = Math.floor(Math.random() * 3) + 2; 
-    const shuffled = [...CHARACTERS].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, count).map(c => c.id);
+    const shuffled = [...ADVISORS].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, count).map(a => a.frontmatter.id);
     setSelectedCharacters(selected);
   };
 
@@ -91,25 +92,25 @@ export default function App() {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {CHARACTERS.map((char) => {
-                const isSelected = selectedCharacters.includes(char.id);
+              {ADVISORS.map((advisor) => {
+                const isSelected = selectedCharacters.includes(advisor.frontmatter.id);
                 return (
                   <button
-                    key={char.id}
-                    onClick={() => toggleCharacter(char.id)}
+                    key={advisor.frontmatter.id}
+                    onClick={() => toggleCharacter(advisor.frontmatter.id)}
                     className={`text-left p-3 rounded-xl border transition-all ${
                       isSelected
                         ? 'bg-stone-900 border-stone-900 text-white shadow-md'
                         : 'bg-white border-stone-200 hover:border-stone-400 hover:bg-stone-50'
                     }`}
                   >
-                    <div className="font-medium text-sm mb-1">{char.name}</div>
+                    <div className="font-medium text-sm mb-1">{advisor.frontmatter.name}</div>
                     <div
                       className={`text-xs line-clamp-2 ${
                         isSelected ? 'text-stone-300' : 'text-stone-500'
                       }`}
                     >
-                      {char.description}
+                      {advisor.frontmatter.tagline}
                     </div>
                   </button>
                 );
