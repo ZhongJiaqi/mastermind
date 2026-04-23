@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('virtual:advisors', () => ({
+vi.mock('../../src/generated/advisors', () => ({
   ADVISORS: [{
     frontmatter: { id: 'munger', name: '芒格', tagline: 't', avatarColor: 'oklch(1 0 0)', speakStyle: 's', version: '0.1' },
     mentalModels: [

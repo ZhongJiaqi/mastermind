@@ -1,3 +1,19 @@
+// 军师配色（Tailwind class），沿用原项目 mastermind 视觉系。
+// 新增军师：为 id 添加一条即可。
+export const ADVISOR_COLORS: Record<string, string> = {
+  buffett: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  munger: 'bg-blue-100 text-blue-800 border-blue-200',
+  musk: 'bg-slate-100 text-slate-800 border-slate-200',
+  caocao: 'bg-red-100 text-red-800 border-red-200',
+  duanyongping: 'bg-orange-100 text-orange-800 border-orange-200',
+  zhangxiaolong: 'bg-green-100 text-green-800 border-green-200',
+  zhenhuan: 'bg-purple-100 text-purple-800 border-purple-200',
+  trump: 'bg-amber-100 text-amber-800 border-amber-200',
+  zhangyiming: 'bg-sky-100 text-sky-800 border-sky-200',
+};
+
+export const DEFAULT_ADVISOR_COLOR = 'bg-stone-100 text-stone-800 border-stone-200';
+
 export const SCENARIOS = [
   {
     label: '职业决策',

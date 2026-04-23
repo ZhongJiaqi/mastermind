@@ -1,6 +1,6 @@
 import { useReducer, useRef, useCallback } from 'react';
 import type React from 'react';
-import { ADVISORS } from 'virtual:advisors';
+import { ADVISORS } from '../generated/advisors';
 import { meetingReducer, initialMeeting } from '../state/meetingReducer';
 import type { MeetingAction } from '../state/meetingReducer';
 import { runMeeting } from '../lib/orchestrator';
@@ -38,42 +38,12 @@ export function useMeeting() {
     [],
   );
 
+  // 主持人追问已移除（UI 保持原项目一致）。如未来启用，可在此重新接入 /api/intake-clarify。
   const start = useCallback(
     async (input: DecisionSessionInput, selectedAdvisorIds: string[]) => {
       dispatch({ type: 'INIT_SESSION', input, selectedAdvisorIds });
-      try {
-        const res = await fetch('/api/intake-clarify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...input, selectedAdvisorIds }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          dispatch({
-            type: 'ANALYSIS_ERROR',
-            error: (err as { error?: { message?: string } })?.error?.message ?? `HTTP ${res.status}`,
-          });
-          return;
-        }
-        const body = await res.json();
-        if (body.needsClarification) {
-          const questions: Clarification[] = (body.questions ?? []).map((q: { id: string; question: string; why: string }) => ({
-            id: q.id,
-            question: q.question,
-            why: q.why,
-            answer: '',
-          }));
-          dispatch({ type: 'INTAKE_NEEDED', questions });
-        } else {
-          dispatch({ type: 'INTAKE_PASSED' });
-          await runRoundtable(selectedAdvisorIds, input, []);
-        }
-      } catch (err) {
-        dispatch({
-          type: 'ANALYSIS_ERROR',
-          error: err instanceof Error ? err.message : 'network error',
-        });
-      }
+      dispatch({ type: 'INTAKE_PASSED' });
+      await runRoundtable(selectedAdvisorIds, input, []);
     },
     [runRoundtable],
   );

@@ -1,4 +1,4 @@
-import { ADVISORS } from 'virtual:advisors';
+import { ADVISORS } from '../src/generated/advisors';
 import { createDashScope, getDashScopeModels } from './_shared/dashscope';
 import { errorResponse, normalizeError } from './_shared/errors';
 import { analyzeRequestSchema } from './_shared/schemas';

@@ -27,4 +27,16 @@ modelBriefs:
   it('returns empty when no meta block', () => {
     expect(parseMetaBlock('no meta here')).toEqual({ usedModels: [], modelBriefs: {} });
   });
+  it('accepts full-width colon "：" in modelBriefs (Chinese output)', () => {
+    const meta = parseMetaBlock(`<meta>
+usedModels:
+  - 安全边际
+  - 能力圈
+modelBriefs:
+  安全边际：用确定性工资替代期权
+  能力圈：对创业公司未来判断力不足
+</meta>`);
+    expect(meta.modelBriefs['安全边际']).toBe('用确定性工资替代期权');
+    expect(meta.modelBriefs['能力圈']).toBe('对创业公司未来判断力不足');
+  });
 });

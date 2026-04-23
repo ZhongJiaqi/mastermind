@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('virtual:advisors', () => ({
+vi.mock('../../src/generated/advisors', () => ({
   ADVISORS: [
     {
       frontmatter: {

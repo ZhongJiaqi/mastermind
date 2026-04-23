@@ -265,4 +265,75 @@ MODEL_HOST=qwen3-plus             # 主持人用
 
 ---
 
-**交接完成。工作目录 clean，所有测试绿，等待用户决定下一步。**
+## 2026-04-23 下午二轮会话更新（smoke + 架构修复）
+
+用户选了 B（端到端 smoke）。过程中发现并修了两个 blocker：
+
+### 架构 blocker 已修：`virtual:advisors` 无法 edge 打包
+
+- 之前 3 个 edge function 用 `import { ADVISORS } from 'virtual:advisors'`，该模块是 Vite plugin 独占虚拟模块；Vercel 打包 edge function 走 esbuild 独立 pipeline，部署后必 404。`vi.mock('virtual:advisors')` 遮蔽了此问题，52 tests 都是假绿。
+- 修复路径：
+  - 新增 `scripts/gen-advisors.ts` 跑一次生成物理文件 `src/generated/advisors.ts`（gitignored）
+  - `vite-plugins/advisors.ts` 重写：保留 HMR，buildStart/HMR 时调 `writeGeneratedFile` 重新落盘
+  - `package.json` 加 `predev` / `prebuild` / `pretest` 钩子自动生成
+  - 7 个文件的 `import 'virtual:advisors'` → 相对路径 `src/generated/advisors`
+  - 3 个 test mock 路径同步更新
+  - 删除 `virtual-modules.d.ts`
+- 新增回归测试 `tests/integration/edge-bundle.test.ts`：直接跑 `esbuild api/**/*.ts --bundle`，保证未来不再退化（**任何 edge 不能解析的 import 都会被抓**）
+
+### Bug fix：`parseMetaBlock` 全角冒号
+
+- `src/lib/meta.ts` 的正则只认英文冒号 `:`；真实 LLM 中文输出会用全角 `：`（如 `安全边际：用确定性工资替代期权`），导致 `modelBriefs` 永远解析为 `{}`
+- 修正：两个正则改 `[:：]`；加 `tests/unit/meta.test.ts` 全角冒号回归 case
+
+### 新架构：本地 dev 一键端到端
+
+- 新增 `vite-plugins/dev-api.ts`：Vite dev 时 `configureServer` 挂 middleware，把 `/api/intake-clarify`、`/api/analyze`、`/api/advisor/[id]` 路由到对应 edge handler（用 `ssrLoadModule` + Node req↔Web Request 适配），用 `loadEnv` 加载 `.env.local` 到 `process.env` 让 handler 读到 DashScope key
+- **`npm run dev` 一条命令**起完整全栈，不用 `vercel dev`，也不用登录 Vercel
+
+### Smoke 结果（真实 DashScope）
+
+| 端点 | 结果 |
+|---|---|
+| `POST /api/intake-clarify` | ✅ JSON 返回 schema 对（`needsClarification` + `questions`） |
+| `POST /api/advisor/munger` | ✅ SSE 流式 + meta 块 + strip ok + 自然发言 in-character |
+| `POST /api/advisor/buffett` | ✅ 同上，引用了"价格是你付出的，价值是你得到的" |
+| `POST /api/analyze` | ✅ 2 张 card 逐条 SSE + `event: done`，JSON.parse 无 markdown 污染 |
+
+完整 spec 7-section golden path 全通。
+
+### 模型名更正（spec 错了）
+
+- spec / `.env.example` 里写的 `qwen3-plus` / `qwen3-max` 在 DashScope 上 404 —— 正确命名是 `qwen-plus` / `qwen-max`（无 "3"）。已更新 `.env.example` + 注释说明。**spec（`specs/2026-04-22-mastermind-design.md`）有多处引用未改，留待用户确认后批量替换。**
+
+### 账户侧 blocker（用户需处理）
+
+- DashScope 账户开启了 **"仅免费额度"** 模式且 `qwen-plus` / `qwen-max` 免费额度已耗尽（`qwen-turbo` 还能用）
+- smoke 跑的是 `qwen-turbo`（覆盖 env 变量）—— 能力弱但足够验证链路
+- 上线前必须去 [DashScope 管理台](https://dashscope.console.aliyun.com/) 关闭"仅免费额度"或充值
+
+### Sprint 5 预警（不需马上改）
+
+`qwen-turbo` 对"今晚吃什么"仍返回 `needsClarification: true` 并生成 2 个追问—— 违反 spec §6.1 "轻量问题不应追问"。原因可能是 prompt 没强到能压住，或 turbo 能力不够。换成 `qwen-plus` 再测一次才能判断。归 Sprint 5 回炉。
+
+### 当前验证状态（命令可复现）
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # tsc --noEmit 0 错
+npm run test    # 15 files / 56 tests 全绿（含 edge-bundle + 全角冒号新 case）
+npm run build   # vite build 含 prebuild 生成 → 成功
+```
+
+Dev server 当前在 background（task id `bk5gnbu50`），env 覆盖 `MODEL_*=qwen-turbo`。
+
+### 剩余任务（优先级）
+
+1. **浏览器 UI 实测**：API 层已全绿，但 UI 层（状态机切换、AdvisorStreamCard 渲染、FinalDecisionCard 置顶、localStorage 写入）没过真流量。建议用户打开 http://localhost:3000 亲自跑一场
+2. **账户解封**：关闭"仅免费额度"或充值，才能切回 `qwen-plus` / `qwen-max`
+3. **Spec 批量替换**：`specs/2026-04-22-mastermind-design.md` 里 `qwen3-plus` / `qwen3-max` 全部改成 `qwen-plus` / `qwen-max`（grep 一下大约 3-5 处）
+4. 原有未完成：4 位 Claude-draft 军师（C），Sprint 4 打磨（A），Sprint 5 回炉
+
+---
+
+**二轮交接完成。工作目录待 commit（有新文件 + 8 个修改）。56 tests 全绿。等待用户决定下一步。**
