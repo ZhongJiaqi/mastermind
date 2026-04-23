@@ -21,10 +21,10 @@ export function parseMetaBlock(text: string): AdvisorMeta {
       if (m) usedModels.push(m[1].trim());
     }
   }
-  const briefSection = body.match(/modelBriefs:\s*([\s\S]*)$/);
+  const briefSection = body.match(/modelBriefs:\s*\n([\s\S]*)$/);
   if (briefSection) {
     for (const line of briefSection[1].split('\n')) {
-      const m = line.match(/^\s+([^:]+):\s*(.+)$/);
+      const m = line.match(/^\s*([^:\s][^:]*):\s*(.+)$/);
       if (m) modelBriefs[m[1].trim()] = m[2].trim();
     }
   }
