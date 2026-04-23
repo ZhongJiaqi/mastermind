@@ -21,5 +21,7 @@ export interface AdvisorSkill {
   quotes: string;
   blindspots: string;
   speakStyle: string;
-  raw: string;
+  // `raw` 仅在 vite-plugin 内部使用（loadAdvisors 返回），运行时的 ADVISORS
+  // 常量已经把它剔除（见 writeGeneratedFile）。
+  raw?: string;
 }

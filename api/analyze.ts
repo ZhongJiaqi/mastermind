@@ -3,7 +3,7 @@ import { createDashScope, getDashScopeModels } from './_shared/dashscope';
 import { errorResponse, normalizeError } from './_shared/errors';
 import { analyzeRequestSchema } from './_shared/schemas';
 import { buildAnalyzePrompt } from './_shared/prompts/analyze';
-import { createSseStream } from './_shared/sse';
+import { createStreamedResponse } from './_shared/sse';
 
 export const config = { runtime: 'edge' };
 
@@ -28,9 +28,8 @@ export default async function handler(req: Request): Promise<Response> {
 
   const models = getDashScopeModels();
   const client = createDashScope();
-  const { response, write, close } = createSseStream();
 
-  (async () => {
+  return createStreamedResponse(async (write) => {
     let buffer = '';
     try {
       const stream = await client.chat.completions.create({
@@ -55,7 +54,6 @@ export default async function handler(req: Request): Promise<Response> {
       } catch {
         // 不把原始 buffer 回显给客户端——可能含 prompt 泄露或敏感推理过程。
         write('error', { code: 'LLM_BAD_JSON', message: 'Analyst returned invalid JSON' });
-        close();
         return;
       }
       for (const card of cards) write('card', card);
@@ -63,10 +61,6 @@ export default async function handler(req: Request): Promise<Response> {
     } catch (err) {
       const e = normalizeError(err);
       write('error', e);
-    } finally {
-      close();
     }
-  })();
-
-  return response;
+  });
 }

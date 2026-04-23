@@ -3,18 +3,28 @@ import { createDashScope, getDashScopeModels } from '../_shared/dashscope';
 import { errorResponse, normalizeError } from '../_shared/errors';
 import { advisorRequestSchema } from '../_shared/schemas';
 import { buildAdvisorPrompt } from '../_shared/prompts/advisor';
-import { createSseStream } from '../_shared/sse';
+import { createStreamedResponse } from '../_shared/sse';
 import { stripMetaBlock, parseMetaBlock } from '../../src/lib/meta';
 
 export const config = { runtime: 'edge' };
 
 export default async function handler(
   req: Request,
-  ctx: { params: { id: string } },
+  ctx?: { params?: { id?: string } },
 ): Promise<Response> {
   if (req.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'POST only', 405);
-  const advisor = ADVISORS.find((a) => a.frontmatter.id === ctx.params.id);
-  if (!advisor) return errorResponse('NOT_FOUND', `Unknown advisor: ${ctx.params.id}`, 404);
+
+  // Vercel edge runtime 不自动注入 ctx.params——从 URL 解析 [id]。
+  // 兼容本地 dev-api middleware（用 ctx 传 params）和 Vercel edge 两种运行环境。
+  const idFromCtx = ctx?.params?.id;
+  const idFromUrl = decodeURIComponent(
+    new URL(req.url).pathname.split('/').filter(Boolean).pop() ?? '',
+  );
+  const id = idFromCtx ?? idFromUrl;
+  if (!id) return errorResponse('BAD_REQUEST', 'Missing advisor id in URL', 400);
+
+  const advisor = ADVISORS.find((a) => a.frontmatter.id === id);
+  if (!advisor) return errorResponse('NOT_FOUND', `Unknown advisor: ${id}`, 404);
 
   let body: unknown;
   try {
@@ -33,9 +43,8 @@ export default async function handler(
 
   const models = getDashScopeModels();
   const client = createDashScope();
-  const { response, write, close } = createSseStream();
 
-  (async () => {
+  return createStreamedResponse(async (write) => {
     let fullText = '';
     try {
       const stream = await client.chat.completions.create({
@@ -54,16 +63,14 @@ export default async function handler(
           write('chunk', { text });
         }
       }
-      const displayText = stripMetaBlock(fullText);
-      const meta = parseMetaBlock(fullText);
-      write('done', { fullText, displayText, meta });
+      write('done', {
+        fullText,
+        displayText: stripMetaBlock(fullText),
+        meta: parseMetaBlock(fullText),
+      });
     } catch (err) {
       const e = normalizeError(err);
       write('error', e);
-    } finally {
-      close();
     }
-  })();
-
-  return response;
+  });
 }
