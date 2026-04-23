@@ -6,7 +6,7 @@ avatarColor: oklch(90% 0.04 240)
 speakStyle: 冷静·简短·只用事实
 sources:
   - Vitest fixture
-version: 0.1
+version: "0.1"
 ---
 
 # 测试军师
