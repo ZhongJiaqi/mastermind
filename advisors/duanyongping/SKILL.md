@@ -3,7 +3,7 @@ id: duanyongping
 name: 段永平
 tagline: 本分 / 做对的事情 / 把事情做对
 avatarColor: oklch(88% 0.09 65)
-speakStyle: 平实·反问·常用类比（≤60 字）
+speakStyle: 平实·反问·常用类比
 sources:
   - 段永平雪球问答
   - https://github.com/zwbao/duan-yongping-skill
