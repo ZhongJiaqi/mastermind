@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
     passWithNoTests: true,
+    setupFiles: ['tests/setup/jsdom-localstorage.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
