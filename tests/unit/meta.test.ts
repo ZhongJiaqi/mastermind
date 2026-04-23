@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripMetaBlock, parseMetaBlock } from '../../src/lib/meta';
+import { stripMetaBlock, stripMetaBlockStreaming, parseMetaBlock } from '../../src/lib/meta';
 
 describe('stripMetaBlock', () => {
   it('removes <meta>...</meta> block', () => {
@@ -8,6 +8,30 @@ describe('stripMetaBlock', () => {
   });
   it('returns input unchanged when no meta', () => {
     expect(stripMetaBlock('hello')).toBe('hello');
+  });
+});
+
+describe('stripMetaBlockStreaming', () => {
+  it('behaves like stripMetaBlock for complete blocks', () => {
+    const input = 'hello world\n\n<meta>\nusedModels:\n  - x\n</meta>';
+    expect(stripMetaBlockStreaming(input)).toBe('hello world');
+  });
+  it('truncates at unclosed <meta> open tag (streaming mid-block)', () => {
+    const input = 'visible speech\n\n<meta>\nusedModels:\n  - 安全';
+    expect(stripMetaBlockStreaming(input)).toBe('visible speech');
+  });
+  it('truncates partial "<m" / "<me" / "<met" / "<meta" tail prefixes', () => {
+    expect(stripMetaBlockStreaming('hello <m')).toBe('hello');
+    expect(stripMetaBlockStreaming('hello <me')).toBe('hello');
+    expect(stripMetaBlockStreaming('hello <met')).toBe('hello');
+    expect(stripMetaBlockStreaming('hello <meta')).toBe('hello');
+  });
+  it('keeps a lone "<" since it might be normal text', () => {
+    // 单独一个 '<' 不切掉——可能是真实内容（如数学表达）
+    expect(stripMetaBlockStreaming('x < 5 is')).toBe('x < 5 is');
+  });
+  it('returns input unchanged when no meta fragment anywhere', () => {
+    expect(stripMetaBlockStreaming('完整自然发言，没有任何 meta 标签。')).toBe('完整自然发言，没有任何 meta 标签。');
   });
 });
 

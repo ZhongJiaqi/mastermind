@@ -13,6 +13,7 @@ import {
   Dices,
 } from 'lucide-react';
 import { useMeeting } from './hooks/useMeeting';
+import { stripMetaBlockStreaming } from './lib/meta';
 import type { AdvisorRound, DecisionCard } from './types/session';
 
 export default function App() {
@@ -230,7 +231,7 @@ function Discussion({ rounds }: { rounds: AdvisorRound[] }) {
                 </p>
               ) : (
                 <p className="text-sm text-stone-700 leading-relaxed pl-1 whitespace-pre-wrap">
-                  {round.content ||
+                  {stripMetaBlockStreaming(round.content) ||
                     (round.status === 'streaming' ? '（正在思考...）' : '')}
                 </p>
               )}
