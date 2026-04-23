@@ -1,0 +1,268 @@
+# Handoff · Mastermind 智囊团
+
+**日期**：2026-04-23（下午会话结束）
+**上次更新**：Sprint 0-3 完成 + Sprint 1 部分（5/9 军师）
+**下一会话第一动作**：读本文件 → 和用户确认下一步走 A/B/C/D
+
+---
+
+## TL;DR（给新会话 Claude 看）
+
+Mastermind 智囊团的核心工程骨架已经搭完并通过所有测试。**52 tests 全绿 / lint 0 错 / build 成功**，但还没跑过端到端真实 API 调用。
+
+已完成：
+- Sprint 0（架构迁移）、Sprint 2（3 个 API 端点）、Sprint 3（前端状态机+UI 重写）全部完成
+- Sprint 1 的基础设施（types + Vite plugin + constants）+ 5 位 fork 军师（芒格/巴菲特/马斯克/段永平/张一鸣）
+
+未完成：
+- Sprint 1.9-1.12：4 位 Claude-draft 军师（张小龙/特朗普/曹操/甄嬛）—— 用户选了"C 方案"暂缓，等基础设施就绪后再做
+- Sprint 4：错误态 UI + 移动端 + Playwright E2E + Vercel 部署
+- Sprint 5：军师质量回炉
+
+下一步有 4 条路（见末节"下一步选项"），**让用户选**。不要擅自往前冲。
+
+---
+
+## 当前状态快照
+
+**仓库**：`/Users/jiaqizhong/mastermind`（origin: `github.com/ZhongJiaqi/mastermind`）
+
+**工作目录**：`/Users/jiaqizhong/mastermind/.worktrees/mastermind-v1`
+
+**分支**：`feat/mastermind-v1`（从 main 切出，未合并未推送）
+
+**Main 分支**：`main` 比远端多 1 个 commit（`0d9c928 chore: ignore .worktrees directory`，尚未 push）
+
+**Git 状态**：working tree clean，36 个 commit 在 feat 分支上
+
+**验证状态**（都是绿的，命令可复现）：
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint   # tsc --noEmit 0 错
+npm run test   # 14 test files / 52 tests 全绿
+npm run build  # Vite build 成功，含 advisors plugin 校验
+```
+
+---
+
+## 已完成 Sprint 明细
+
+### Sprint 0：架构迁移 ✅
+- 卸载 `@google/genai` + `express`；装 `vitest @vitest/coverage-v8 jsdom` + `openai gray-matter zod`
+- `vite.config.ts` 去掉 `GEMINI_API_KEY` define
+- `src/App.tsx` Gemini 调用 stub 成 "会议功能正在迁移中"
+- `vitest.config.ts` 建好含 `passWithNoTests: true`
+
+### Sprint 1：vault + 5 位军师 ✅（部分）
+- `src/types/advisor.ts`：`AdvisorFrontmatter / AdvisorMentalModel / AdvisorSkill`
+- `vite-plugins/advisors.ts`：扫描 `advisors/**/SKILL.md`，gray-matter 解析 frontmatter + 正则提取 M/Q/B/S，zod 校验 frontmatter，build-time 注入 `virtual:advisors` 模块；含热重载
+- `virtual-modules.d.ts`：TypeScript 声明
+- `advisors/_fixtures/valid-minimal/SKILL.md`、`invalid-missing-m/SKILL.md`：单元测试 fixture
+- `src/constants.ts`：删 `CHARACTERS`，只保留 `SCENARIOS`
+- **5 位 fork 军师就位**：
+  - `advisors/duanyongping/SKILL.md`（8 心智模型，fork 自 `zwbao/duan-yongping-skill`）
+  - `advisors/munger/SKILL.md`（8 心智模型，fork 自 `alchaincyf/munger-skill`）
+  - `advisors/musk/SKILL.md`（7 心智模型，fork 自 `alchaincyf/elon-musk-skill`）
+  - `advisors/buffett/SKILL.md`（7 心智模型，fork 自 `josephway/humanstar`）
+  - `advisors/zhangyiming/SKILL.md`（6 心智模型，fork 自 `josephway/humanstar`）
+
+### Sprint 2：3 个 Vercel Edge Functions ✅
+- `api/_shared/dashscope.ts`：`createDashScope()` 返回 `new OpenAI({ apiKey, baseURL })` + `getDashScopeModels()` 读 env
+- `api/_shared/errors.ts`：`errorResponse(code, message, status)` + `normalizeError(err)`
+- `api/_shared/sse.ts`：`formatSseEvent()` + `createSseStream()` 返回 `{ response, write, close }`
+- `api/_shared/schemas.ts`：`intakeClarifyRequestSchema / advisorRequestSchema / analyzeRequestSchema`（Zod）
+- `api/_shared/prompts/intake.ts`：主持人追问 prompt
+- `api/_shared/prompts/advisor.ts`：军师发言 prompt（含 `<meta>` 块指令）
+- `api/_shared/prompts/analyze.ts`：Analyst 校验员 prompt
+- `api/intake-clarify.ts`：POST → `qwen3-plus` 非流式 → 返回 JSON（needsClarification + questions）
+- `api/advisor/[id].ts`：POST → `qwen3-plus` 流式 → SSE `chunk` + 末尾 `done`（含 `displayText` / `meta`）
+- `api/analyze.ts`：POST → `qwen3-max` 流式 → 累积 buffer → JSON.parse → 逐 card emit `card` + `done`
+- `vercel.json`：runtime edge + maxDuration 60s
+- **全部 API 含 integration test，vi.mock `virtual:advisors` 和 dashscope**
+
+### Sprint 3：前端状态机 + UI ✅
+- `src/types/session.ts`：`DecisionSession / AdvisorRound / DecisionCard / AnalysisState / MeetingState` 等完整类型
+- `src/state/meetingReducer.ts`：18 个 action、spec §7.2 完整状态机、`initialMeeting` 常量、immutable 更新
+- `src/lib/meta.ts`：`stripMetaBlock()` + `parseMetaBlock()`，含 4 个单元测试
+- `src/lib/sseClient.ts`：`openSseStream()` AsyncGenerator，fetch POST + ReadableStream 解析
+- `src/lib/storage.ts`：`saveSession / loadSessions / clearSessions / savePrefs / loadPrefs`，版本化 key
+- `src/lib/orchestrator.ts`：`runMeeting()` 顺序编排 N 位军师 → Analyst，含 strip meta + prior rounds 传递
+- `src/hooks/useMeeting.ts`：`useReducer + runMeeting + intake fetch` 组合钩
+- 13 个组件文件（`AdvisorCard / AdvisorPicker / DecisionForm / ScenarioShortcuts / SubmitButton / EmptyStateCard / CompactInputBar / AdvisorStreamCard / FinalDecisionCard / SectionFinalDecisions / InlineClarifyCards / NewMeetingButton / 视图 IdleView + MeetingView`）
+- `src/App.tsx`：瘦身成状态驱动的 view switcher，含 Motion `AnimatePresence`
+
+---
+
+## 尚未完成的任务清单
+
+### 高优先级（blocker for "可用产品"）
+1. **端到端 smoke 测试**：用户的 `.env.local` 已有真实 DASHSCOPE_API_KEY，但还没跑过真实 API。建议先跑一次"芒格 + 巴菲特对跳槽"类问题，观察：
+   - intake-clarify 是否正确判断轻量 vs 严肃问题
+   - 军师是否稳定输出 `<meta>` 块（格式能被 `parseMetaBlock` 解析）
+   - Analyst 是否正确输出严格 JSON 数组
+   - 客户端 SSE 解析是否稳
+2. **Vercel 部署**：`vercel login + vercel link + vercel env add + vercel --prod`，验证线上 edge function 能跑 SSE
+
+### 中优先级
+3. **Sprint 1.9-1.12**：4 位 Claude-draft 军师（张小龙 / 特朗普 / 曹操 / 甄嬛）—— 需要用户参与 review
+4. **Sprint 4 打磨**：
+   - 错误态 UI（ErrorBanner 组件 + 军师级重试）
+   - `API_KEY_MISSING` 友好提示（createDashScope 抛时加 code，前端识别）
+   - 移动端 responsive pass（375px breakpoint）
+   - Playwright E2E 基线（spec 跑 `npm run test:e2e`）
+
+### 低优先级
+5. **Sprint 5 军师质量回炉**：5-10 场真实决策测试，发现军师出戏/空洞/meta 块不稳等问题，回炉 SKILL.md 的 M/S 段
+6. **Main 同步**：目前 main 比 origin/main 多一个 `.worktrees/` gitignore commit 尚未 push
+
+---
+
+## 走通的路径（别浪费时间重新摸索）
+
+### 依赖版本（与 plan 文本可能不符，以实际安装为准）
+- **vitest** 4.1.5（plan 未指定版本）
+- **openai** 6.34.0（plan 说 `^4.x`，实际装了 6.x，`.baseURL` 属性访问兼容，`chat.completions.create({ stream: true })` 的 async iteration 兼容）
+- **zod** 4.3.6（plan 说 `^3.x`，zod 4 的 `z.object / z.string / z.record / .extend / .safeParse / z.infer` 都保持兼容，没碰到坑）
+- **gray-matter** 4.0.3
+- **@types/react 19** + **@types/react-dom 19**（Sprint 3 Task 3.7-3.10 时发现 React 19 自带类型不行，装了显式 types 包）
+
+### SKILL.md 写法（9 位军师共用）
+- **frontmatter 的 `version` 字段必须带引号**：`version: "0.1"`——不然 YAML 解析成 number，zod `z.string()` fail
+- **M 段至少 3 个**（plan 说建议 5-8 个）
+- **每个 M 必须三部分齐全**：`**方法本体**：...` + `**典型决策倾向**：...` + `**适用信号**：...`
+- **`speakStyle` 字段不要带 "(≤60 字)" 这种 meta 注释**——subagent 容易把 spec 约束当成值复制进去（已在 duanyongping 发现并修正）
+- **tagline 限 32 字符**（zh 字符也算一个，不是 byte）——zhangyiming 的初稿因此被截短
+
+### 测试模式
+- **`virtual:advisors` 在 test 里必须 vi.mock**（Node 运行 test 拿不到 Vite 虚拟模块）
+  ```ts
+  vi.mock('virtual:advisors', () => ({
+    ADVISORS: [{ frontmatter: {...}, mentalModels: [...], quotes: '', ... }],
+  }));
+  ```
+- **`api/_shared/dashscope` 在 integration test 必须 vi.mock**（不然真实连 DashScope）
+- **jsdom 环境测试**用 `// @vitest-environment jsdom` 顶部指令切换
+- **Node 25 的 localStorage 全局会挡住 jsdom**——`tests/setup/jsdom-localstorage.ts` 用 InMemoryStorage + Object.defineProperty 覆盖，在 `vitest.config.ts` 的 `setupFiles` 中注入
+
+### Git 工作流
+- Worktree 已 gitignore（main 分支的 `.gitignore` 含 `.worktrees/`）
+- commit message 不加 `Co-Authored-By`（用户全局设置禁用）
+- 不要强推 main；feat 分支可以 `git push -u origin feat/mastermind-v1`
+- Committer 显示为 `Jiaqi Zhong <jiaqizhong@JiaqideMacBook-Pro.local>`（自动从 hostname 生成，**不要 `git config --global --edit`** 修正，系统会自动）
+
+---
+
+## 死路 / 坑 / 解决方案
+
+| 问题 | 解决 |
+|---|---|
+| YAML `version: 0.1` 被解析成 number，zod fail | 所有 SKILL.md 用 `version: "0.1"` 带引号 |
+| Vitest 跑 integration test 找不到 `virtual:advisors` | 每个 test 顶部 `vi.mock('virtual:advisors', ...)` |
+| Node 25 的 localStorage 全局覆盖 jsdom 的 | `tests/setup/jsdom-localstorage.ts` + `setupFiles` |
+| React 19 TSX `key` props 报 TS2322 | 装 `@types/react@^19 @types/react-dom@^19` |
+| Subagent 复制 spec 注释 `(≤60 字)` 到 speakStyle 值 | Prompt 中显式告知别加 meta 注释；review 每个 fork 后的 frontmatter |
+| OpenAI SDK 6.x 的 `.baseURL` 属性访问 | 实际保持 `.baseURL`，不是 `.baseUrl`；SDK 文档 OK |
+| zhangyiming 源仓库 tagline 超 32 字符 | 截短为 `Context / 算法思维 / 延迟满足` |
+
+---
+
+## 下一步选项（让用户选）
+
+**A. Sprint 4 打磨 + 部署**：错误态 UI、移动端、Playwright E2E、Vercel 部署——走完就有线上可用 URL
+**B. 端到端 smoke 测试**：本地 `vercel dev` 或起一个小 Node server mock 代理 `/api/*` 到编译后的 edge function，用 `.env.local` 的真实 key 跑一场芒格+巴菲特会议——验证闭环前不急着部署
+**C. 回 Sprint 1 补 4 位 Claude-draft 军师**：张小龙 / 特朗普 / 曹操 / 甄嬛——需要用户 review 每位的 M/Q/B/S
+**D. diff review**：派 code-reviewer 扫整条 feat 分支的 diff，找架构、安全、死代码问题
+
+**推荐问法**："你想走 A / B / C / D 哪条？"——不要自行选一条冲出去。用户 [上次](handoff-2026-04-23-sprint-start.md) 明确"选 C"跳过了 Sprint 1 draft 部分，这次也可能有新想法。
+
+---
+
+## 关键运维信息
+
+### 文件地图
+
+```
+/Users/jiaqizhong/mastermind/                       # 主仓库
+├── .worktrees/mastermind-v1/                       # ★ 工作目录（branch: feat/mastermind-v1）
+│   ├── CLAUDE.md                                   # 项目级指引
+│   ├── docs/superpowers/
+│   │   ├── specs/2026-04-22-mastermind-design.md   # v5.4 权威 spec（1155 行）
+│   │   ├── plans/2026-04-23-mastermind-v1-bootstrap.md  # 6-sprint 详细 plan（3828 行）
+│   │   ├── handoff.md                              # ★ 本文件
+│   │   └── handoff-2026-04-23-sprint-start.md      # 上次会话初始交接（参考）
+│   ├── advisors/
+│   │   ├── _fixtures/                              # valid-minimal + invalid-missing-m
+│   │   ├── buffett/SKILL.md                        # 已 fork ✅
+│   │   ├── duanyongping/SKILL.md                   # 已 fork ✅
+│   │   ├── munger/SKILL.md                         # 已 fork ✅
+│   │   ├── musk/SKILL.md                           # 已 fork ✅
+│   │   └── zhangyiming/SKILL.md                    # 已 fork ✅
+│   │   # 待做：zhangxiaolong / trump / caocao / zhenhuan
+│   ├── api/                                        # 3 个 edge function + _shared
+│   ├── src/                                        # 重写后的前端
+│   ├── tests/                                      # 14 个 test file / 52 test
+│   ├── vite-plugins/advisors.ts                    # vault 读取插件
+│   ├── virtual-modules.d.ts                        # virtual:advisors 类型
+│   ├── .env.local                                  # ★ 用户真实 API key（git-ignored，勿读）
+│   ├── .env.example                                # Qwen 配置模板
+│   ├── vercel.json                                 # edge runtime + 60s
+│   └── vitest.config.ts
+└── (main checkout 在 /Users/jiaqizhong/mastermind 根部，main 比 origin 多 1 个 commit)
+```
+
+### npm 命令
+
+```bash
+npm run dev         # Vite dev server @ http://localhost:3000
+npm run build       # 生产构建（含 advisorsPlugin 校验）
+npm run lint        # tsc --noEmit
+npm run test        # vitest run（52 tests）
+npm run test:watch  # vitest watch
+npm run test:cov    # 覆盖率
+```
+
+### 环境变量（`.env.local` 用户已填）
+
+```
+DASHSCOPE_API_KEY=sk-xxx          # 用户真实 key，勿读勿提交勿在 chat 提及
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MODEL_ADVISOR=qwen3-plus          # 军师用
+MODEL_SYNTHESIZER=qwen3-max       # Analyst 用
+MODEL_HOST=qwen3-plus             # 主持人用
+```
+
+### Subagent 派遣经验
+
+- **Subagent-Driven** 已走通一整个 sprint 的 pipeline——每个 task 派 1 个 subagent，复杂 TDD 用 sonnet 够用
+- 基础设施类 task 批量打包（2.1+2.2 / 2.3+2.4 / 3.1+3.2+3.3 / 3.4+3.5）节省往返
+- 用户 **选择了 C 方案**跳过 Sprint 1 draft 部分：draft 需用户参与 review，单 subagent autonomic 产出质量不保证
+- Subagent 容易犯的错：把 spec 里的约束注释当值复制（如 `(≤60 字)`）、version 不加引号、跨 task 改了不该改的东西
+- 每次 subagent 后用 `git show <sha>` 快速核对 diff 范围
+
+---
+
+## 用户偏好 / 风格提示
+
+- **沟通**用中文、简洁（通常 1 字决策：a/b/c/go/过）
+- **执行**倾向"能自动做就自动做，不要等我"——但**关键选项（A/B/C/D 这种）仍需用户决定**
+- **Commit flow**：确认后 commit+push 一气呵成，不要分步再问
+- **Show diff before committing**（对 content 类可放宽，对 code 类严格）
+- **不加 Co-Authored-By**
+- **API key 保护**：`.env.local` 用户已填真实 key，**绝不** 读取内容 / 回显 / commit / 发给 subagent
+- **反对过度工程**：一路砍过 C 段（场景限制）、P 段（决策原则）、Synthesizer 改 Analyst——同样的 YAGNI 惯性保留到后面
+- **时间感**：今天（2026-04-23）一天内走完 Sprint 0-3，节奏偏快，用户可能累了需要休息
+
+---
+
+## 新会话第一条指令建议
+
+```
+读 /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1/docs/superpowers/handoff.md
+然后我们讨论下一步走 A / B / C / D 哪条。
+```
+
+新会话 Claude 读本文件 + spec（`specs/2026-04-22-mastermind-design.md`）+ plan（`plans/2026-04-23-mastermind-v1-bootstrap.md`）应该足够接上。**不要读 `.env.local`**。
+
+---
+
+**交接完成。工作目录 clean，所有测试绿，等待用户决定下一步。**
