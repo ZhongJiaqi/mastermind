@@ -612,3 +612,80 @@ npm run build   # 147.7 kB gzipped JS
 ---
 
 **Council prompt 精简轮次完成。线上 ship、48 tests / lint / build 全绿、量化指标超越 `1c25f60` baseline。**
+
+---
+
+## 2026-04-29（晚）· 收口：限制每人发言 1-2 次解决 60s 上限
+
+**Commit**：`0e6502a` (perf: cap discussion at 1-2 rounds per person)
+**线上**：同 `https://mastermind-gamma-weld.vercel.app`（已重新部署 alias）
+
+### 问题
+
+`c68c909` ship 后实测线上 council 单场约 70-90s——擦边 Vercel edge 60s maxDuration 上限。3 位军师场凑巧能跑通（streaming first-byte 计时宽松），但 4-5 位军师或长 question 会爆。
+
+### 修复
+
+prompt discussion 段说明从「谁说几次/节奏自然展开」改为「每位人物发言 1-2 次，短促有力胜过冗长」。1 行最小改动。
+
+### 为什么这条不违背"按原项目来"
+
+原项目极简 prompt 跑 qwen 实测就是 **6 messages / 2-2-2**（每人 2 次）—— 我们当前 vault 版加这行 hint 后 dev 端跑出 **6 messages / 2-2-2**，与原项目对齐。删掉这行反而比原项目更长（10 条 4-3-3）。所以这 hint 是**回归原项目**，不是引入新约束。
+
+### 实测对比
+
+| 指标 | `c68c909` baseline | `0e6502a`（本轮） |
+|---|---|---|
+| 用时 | 70-90s（擦边超 60s） | **46s 线上 / 42s dev** |
+| Total messages | 10 | **8 线上 / 6 dev** |
+| 分布 | 4-3-3 | **3-3-2 线上 / 2-2-2 dev** |
+| Order | B-C-Z-B-C-Z-B-C-Z-B | **B-C-Z-B-C-Z-B-C**（曹操结尾抢话） |
+| Cards | 3 | **3 valid** |
+| Console error | 0 | **0** |
+
+dev 端比线上更紧凑（2-2-2 vs 3-3-2）—— 可能 dev 模型实例 thread 资源更充足，跟得更紧 hint。无论如何，46s ≤ 60s 留足缓冲。
+
+### 仍未解决
+
+- **4+ 位军师场景**未实测，可能仍接近 60s 上限。Sprint 4/5 时跑多场配置矩阵验证。
+- **Round-robin 顽固**：3-3-2 比 4-3-3 略不均，但 order 仍像 round-robin（"按原项目来"接受）。
+
+### Vercel 计划讨论
+
+- Hobby（免费）：edge 60s / serverless 10s——当前用
+- Pro（$20/月 × 用户）：serverless 上限 300s（edge 仍 60s）
+- 短期不升级。靠 prompt 优化把单场压到 ≤50s。
+
+### 当前验证状态
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 48 tests 全绿
+npm run build   # 147.7 kB gzipped JS
+```
+
+线上 deploy alias 已切到最新 commit `0e6502a`。
+
+### 剩余任务（更新优先级）
+
+🔴 **高优先级**
+- DashScope 配额监控（2026-07-20 qwen3.6-max-preview 免费到期）
+
+🟡 **中优先级**
+- Sprint 4：错误态 UI / 移动端 responsive / Playwright E2E 基线
+- Sprint 1.12：第 4 位 Claude-draft 军师 **甄嬛** 起草
+- Sprint 5：军师质量回炉（5-10 场真实决策测试 → 调 vault）
+
+🟢 **低优先级 / 清理**
+- `.env.example` 默认 `qwen3-max` → `qwen3.6-max-preview`
+- spec `qwen3-plus` / `qwen3-max` 引用更新
+- main 分支同步（`0d9c928 chore: ignore .worktrees directory` 未 push）
+- `feat/mastermind-v1` → main PR / 合并
+
+⚪ **Plan §风险点 1 留白**
+- Round-robin 完全破除（V5 风格档位 hint）—— 用户接受现状
+
+---
+
+**收口轮次完成。Council 链路从 70-90s 压到 46s（线上）/ 42s（dev），4 commit 一条命令链：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a`。**
