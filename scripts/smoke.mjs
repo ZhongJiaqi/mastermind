@@ -27,7 +27,7 @@ const HOST = process.argv[2] || 'http://localhost:3000';
 const TIMEOUT_SEC = 90;
 
 const PAYLOAD = {
-  selectedAdvisorIds: ['buffett', 'caocao', 'zhangxiaolong'],
+  selectedAdvisorIds: ['buffett', 'caocao', 'zhenhuan'],
   session: {
     question:
       '我在国企工作 5 年成长慢，AI 创业公司挖我做 CTO 给 1.5% 期权 50% 涨薪但 996，老婆怀孕 6 个月，跳不跳？',
