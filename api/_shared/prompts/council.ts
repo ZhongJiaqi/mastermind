@@ -21,7 +21,7 @@ function formatMentalModels(advisor: AdvisorSkill): string {
 }
 
 function formatAdvisorBlock(advisor: AdvisorSkill): string {
-  return `## ${advisor.frontmatter.name}（${advisor.frontmatter.tagline}）
+  return `## ${advisor.frontmatter.name}（id: \`${advisor.frontmatter.id}\` · ${advisor.frontmatter.tagline}）
 
 心智模型：
 ${formatMentalModels(advisor)}
@@ -69,7 +69,7 @@ ${question}${contextBlock}${optionsBlock}${leaningBlock}${clarifBlock}
 <conclusions>
 [
   {
-    "advisorId": "人物 id",
+    "advisorId": "上方人物括号里 id 后的精确字符串（如 buffett / caocao / zhenhuan），不要变形为 warren_buffett、cao_cao、Zhen Huan 等其他形式",
     "characterName": "人物名",
     "conclusion": "≤40 字，明确立场",
     "reasoning": "80-150 字推理",
@@ -81,7 +81,9 @@ ${question}${contextBlock}${optionsBlock}${leaningBlock}${clarifBlock}
 </conclusions>
 
 约束：
-- 不要说"我用 XX 模型分析"这种 meta 陈述——心智模型是思考工具，不是口头禅。
+- 不要说"我用 XX 模型分析"这种 meta 陈述——心智模型是思考工具，不是口头禅。**也不要每次都把同一个模型名当口头禅反复念**（如巴菲特每句必喊"安全边际"、芒格每场必"反过来想"）；让模型隐于推理之下，自然落到结论里。
+- 问题轻松时（如日常吃喝穿戴选择），发言也要轻松短促，不要把每个选择都升级为人生哲学；用一两句直觉判断即可。
 - 必须先完整输出 \`<discussion>...</discussion>\` 块，再紧接着输出 \`<conclusions>...</conclusions>\` 块；两个块都必须闭合，缺一不可。
-- conclusions 必须是严格 JSON 数组，不要用 markdown 代码块包裹，不要用自然语言列表代替。`;
+- conclusions 必须是严格 JSON 数组，不要用 markdown 代码块包裹，不要用自然语言列表代替。
+- conclusions 数组每个对象的 \`advisorId\` 必须严格使用上方人物列表标题里 id: 后面的字符串，区分大小写。`;
 }
