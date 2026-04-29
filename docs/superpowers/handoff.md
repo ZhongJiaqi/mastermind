@@ -1019,3 +1019,55 @@ node /tmp/audit-runner.mjs  # 6 场审计 25-41s 全 PASS / advisorId 6/6 对齐
 
 **Sprint 5 Round 1 完成。本轮 commits：`6da5ae8`（prompt+vault 修复）+ handoff 追加。
 今日累计 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0` → `e1c0618` → `6da5ae8`（共 14 commits）。**
+
+---
+
+## 2026-04-29（凌晨末）· 收尾杂项 + PR 创建
+
+**Commit**：`e28e98e` (docs: env+spec to qwen3.6-max-preview)
+**Main 同步**：`0d9c928 chore: ignore .worktrees directory` 已 push 到 origin/main
+**PR**：https://github.com/ZhongJiaqi/mastermind/pull/1（OPEN，63 commits, +14460/-366 跨 62 files）
+
+### 改动
+
+**`.env.example`**：
+- 默认值 `qwen3-max` → `qwen3.6-max-preview`
+- 注释更新可用模型清单：`qwen3.6-max-preview` ⭐ / `qwen3.5-plus` / `deepseek-v4-pro`
+- 提示 Qwen 3.x 默认开 reasoning，已通过 `enable_thinking: false` 关闭
+
+**`docs/superpowers/specs/2026-04-22-mastermind-design.md`**：
+- 11 处过时 `qwen3-max` 引用替换为 `qwen3.6-max-preview`
+- v5.5 changelog 历史记述还原（被 sed 全局替换误改的部分）
+- 追加 v5.6 changelog 记录本轮迁移（含 enable_thinking 修复）
+- 仅剩 2 处 `qwen3-max` 在 changelog v5.5/v5.6 历史记述里（事实记录，保留）
+
+**Main 分支同步**：本地 main 比 origin 多 1 个 commit `0d9c928 chore: ignore .worktrees directory` 之前未 push，本轮 push 同步。
+
+### PR 状态
+
+- **OPEN**（不直接 merge，等用户 review + 决定何时合）
+- **63 commits** 跨 Sprint 0-3 架构迁移 / Sprint 1.x 9 位军师 / 单次 council 重构 / Sprint 4 UI 三档 / Sprint 5 Round 1
+- **+14460 / -366 lines / 62 files**
+- 自动跑了 PR base check（GitHub 端会触发 Vercel preview deployment）
+
+### 合并建议（写在 PR body 里）
+
+- 合并前推荐：用户在线上 manual 试 2-3 个问题确认满意
+- 建议 squash 或 merge commit：63 commits 详细记录每一步演进，merge commit 保留历史更有教学价值；如喜欢干净 main 可 squash
+- 不阻塞：feat 分支已自带 deploy 到 prod，main 合并后触发同 prod URL 的 main 分支 deploy
+
+### 剩余任务
+
+⚪ **完全 wrap-up**
+- 用户 review PR 1 + merge / squash
+- DashScope 配额 2026-07-20 到期监控（提前提醒续期或切付费）
+
+⚪ **未来 Sprint 5 Round 2 候选（可选）**
+- trump 中英夹杂强化（可在 S 段加"每段必带 1-2 个英文大词"）
+- 巴菲特情感场金融化压制（情感场仍 4 次 vault 关键词偏多）
+- Round-robin 完全破除（V5 风格档位 hint）—— 用户接受现状
+
+---
+
+**今日 Mastermind v1 完整 ship + PR 创建。
+最终 chain（共 16 commits）：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0` → `e1c0618` → `6da5ae8` → `fcfa254` → `e28e98e`。**
