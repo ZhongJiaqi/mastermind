@@ -63,7 +63,7 @@ ${question}${contextBlock}${optionsBlock}${leaningBlock}${clarifBlock}
 <discussion>
 人物名: 发言内容
 人物名: 发言内容
-（谁说几次/什么顺序/长短/节奏自然展开；同一人可多次出现；只能用上方人物名单里的名字，不要引入"主持人"或其他名单外角色）
+（每位人物发言 1-2 次，短促有力胜过冗长；只能用上方人物名单里的名字，不要引入"主持人"或其他名单外角色）
 </discussion>
 
 <conclusions>
