@@ -13,21 +13,47 @@
 - **单次 LLM 调用同时演多人**——相比 N 次独立调用，更贴近"AI 自导自演"的对话动态，能出现互相 @、反驳、追加。
 - **不预设 round-robin 节奏**——但 LLM 倾向轮流发言（实测原项目同模型也这样）。
 
-## 9 位军师
+## 13 位军师
+
+### 投资 / 战略
 
 | ID | 名字 | 标签 |
 |---|---|---|
 | `buffett` | 沃伦·巴菲特 | 价值投资 / 长期主义 / 安全边际 |
 | `munger` | 查理·芒格 | 多元思维 / 逆向思考 / 普世智慧 |
-| `musk` | 埃隆·马斯克 | 第一性原理 / 物理学思维 / 极致野心 |
 | `duanyongping` | 段永平 | 本分 / 做对的事情 / 把事情做对 |
+
+### 创业 / 产品
+
+| ID | 名字 | 标签 |
+|---|---|---|
+| `musk` | 埃隆·马斯克 | 第一性原理 / 物理学思维 / 极致野心 |
+| `jobs` | 史蒂夫·乔布斯 | 极简偏执 / 交叉学科 / 现实扭曲力场 |
 | `zhangyiming` | 张一鸣 | Context / 算法思维 / 延迟满足 |
 | `zhangxiaolong` | 张小龙 | 同理心 / 极简主义 / 直击本质 |
+
+### 心理 / 影响力
+
+| ID | 名字 | 标签 |
+|---|---|---|
+| `cialdini` | 罗伯特·西奥迪尼 | 互惠 / 承诺一致 / 社会认同 |
+| `kahneman` | 丹尼尔·卡尼曼 | 系统 1/2 / 损失厌恶 / 反偏差 |
+
+### 政治 / 谈判
+
+| ID | 名字 | 标签 |
+|---|---|---|
 | `caocao` | 曹操 | 实用主义 / 杀伐果断 / 唯才是举 |
 | `trump` | 特朗普 | 交易艺术 / 杠杆 / 打回去更重 |
-| `zhenhuan` | 甄嬛 | 隐忍 / 借力打力 / 以退为进 |
 
-5 位 fork 自社区 nuwa skills，4 位 Claude-draft + 用户 review 而成。
+### 文学 / 虚构
+
+| ID | 名字 | 标签 |
+|---|---|---|
+| `zhenhuan` | 甄嬛 | 隐忍 / 借力打力 / 以退为进 |
+| `holmes` | 夏洛克·福尔摩斯 | 演绎推理 / 排除法 / 观察细节 |
+
+5 位 fork 自社区 nuwa skills（munger / musk / buffett / duanyongping / zhangyiming）；4 位 Claude-draft + 用户 review（zhangxiaolong / trump / caocao / zhenhuan）；4 位参考社区资料 + Claude-draft（jobs / cialdini / kahneman / holmes）。
 
 ## 技术栈
 
@@ -131,11 +157,14 @@ mastermind/
 
 ## 致谢
 
-5 位社区 fork 来源：
+社区参考来源：
 
-- `munger` / `musk` ← [alchaincyf/munger-skill](https://github.com/alchaincyf/munger-skill) + [alchaincyf/elon-musk-skill](https://github.com/alchaincyf/elon-musk-skill)
+- `munger` / `musk` / `jobs` ← [alchaincyf/munger-skill](https://github.com/alchaincyf/munger-skill) + [alchaincyf/elon-musk-skill](https://github.com/alchaincyf/elon-musk-skill) + [alchaincyf/steve-jobs-skill](https://github.com/alchaincyf/steve-jobs-skill)
 - `buffett` / `zhangyiming` ← [josephway/humanstar](https://github.com/josephway/humanstar)
 - `duanyongping` ← [zwbao/duan-yongping-skill](https://github.com/zwbao/duan-yongping-skill)
+- `kahneman` ← [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) 的 council-kahneman.md
+- `holmes` ← [NimritaKoul/sherlock-holmes-agent-skill](https://github.com/NimritaKoul/sherlock-holmes-agent-skill)
+- `cialdini` ← Robert Cialdini 著《Influence》6+1 原理（无现成 vault，原创起草）
 
 原项目脚手架：[ZhongJiaqi/mastermind](https://github.com/ZhongJiaqi/mastermind)（Google AI Studio 生成的 Gemini 单次调用版）
 
