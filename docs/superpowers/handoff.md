@@ -396,9 +396,122 @@ npm run build  # 147.7 kB gzipped JS
 
 ### Git 历史（最新 → 早）
 
+- `1c25f60` docs(handoff): append council refactor entry
 - `f1d61ea` feat(arch): single-call council for dynamic debate dynamics
 - `9e0a5d9` fix(ui): strip <meta> during streaming
 - `4fb65d3` chore(ui): page title + favicon
 - `8e67fcb` fix: address HIGH findings from review
 - `e56b997` fix(arch): virtual:advisors → generated file + restore UI
 - ...
+
+---
+
+## 2026-04-29 · 下一轮待执行：Council prompt 精简（new chat pick this up）
+
+**完整 plan**：`~/.claude/plans/ai-ai-fancy-glade.md`（已用户批准，未实施）
+
+### 为什么改
+
+当前 council 线上实测（commit `1c25f60`）相对原项目 `ZhongJiaqi/mastermind` main 分支的"AI 自导自演"动态碰撞感**仍然不足**——
+
+- 发言 3-3-3 均匀化（无激进/克制层次）
+- 顺序严格 round-robin（像主持人点名）
+- 每条压成 ≤120 字 soundbite（无长短节奏）
+- 缺直接 @ 互动（各自独白拼接）
+
+**根因**：`api/_shared/prompts/council.ts` 当前 prompt 约束过度（8 条行为准则、独立"心智模型目录"段、字数上限、temp 0.7）→ LLM 进入"考核员工"模式而非"即兴演员"模式。原项目 prompt 仅 ~500 tokens，几乎无约束，反而放飞。
+
+### 拍板的策略
+
+**以原项目 prompt 骨架为基底（极简、自由），仅在「人物列表」处注入完整 vault M/Q/B/S。** 既保留新 MVP 的 vault 增值，又让 LLM 重新进入自由演员状态。
+
+### 改动文件（2 个）
+
+1. **`api/_shared/prompts/council.ts`** —— prompt builder 整体重写
+   - 删除 8 条行为准则
+   - 删除独立的「心智模型目录」段
+   - 改成"人物列表 + M/Q/B/S 完整注入 + 输出格式"三段式
+   - 唯一保留约束："不要 meta 说'我用 XX 模型分析'"（spec v4.3 硬约束）
+   - `mentalModels.name` 必须来自该人物 M 段——只在 conclusions JSON schema 描述里说一次，不单独立段
+
+2. **`api/council.ts`** —— `temperature: 0.7` → `0.9`（更接近原项目 Gemini 默认）
+
+### 不动的文件
+
+- `src/lib/councilParser.ts` / `src/lib/orchestrator.ts` / `src/state/meetingReducer.ts` / `src/hooks/useMeeting.ts` / `src/App.tsx`
+- 所有测试（prompt 内容不影响 mock）
+- `councilParser` 不强制校验 `mentalModels.name` 是否在 vault；偶尔越界 UI 直接显示
+
+### 新 prompt 骨架（参考）
+
+```
+你是一场圆桌会议的主持 + 全体演员。请让以下人物根据自己的心智模型和性格，进行一轮相互讨论（碰撞不同的思维模型），然后再分别给出他们的最终决策建议。
+
+# 人物列表
+
+## {{name}}（{{tagline}}）
+
+心智模型：
+{{M 段完整：方法本体 / 典型决策倾向 / 适用信号}}
+
+代表语录：
+{{Q 段}}
+
+自觉边界：
+{{B 段}}
+
+说话风格：
+{{S 段}}
+
+---
+（每位军师同结构）
+
+# 用户的问题
+{{question}}{{optional context/options/leaning}}
+
+# 输出格式（必须含 <discussion> 和 <conclusions> 双块）
+
+<discussion>
+人物名: 发言内容
+（谁说几次/什么顺序/长短/节奏自然展开）
+</discussion>
+
+<conclusions>
+[per-character JSON cards with mentalModels.name 须来自该人物 M 段]
+</conclusions>
+
+约束：不要说"我用 XX 模型分析"这种 meta 陈述。
+```
+
+### 实施顺序
+
+1. 重写 `api/_shared/prompts/council.ts`
+2. 改 `api/council.ts` 的 `temperature` 一行
+3. 本地 `npm run lint && npm run test && npm run build`
+4. 本地 dev + Playwright 跑一场（曹操 + 张小龙 + 巴菲特，职业决策）
+5. **量化验证**（DOM 读 `[data-role="discussion-message"]`）：
+   - `total ≥ 5`
+   - `per` 非均匀（最大值 ≥ 最小值 × 1.5，例如 5/3/2 而非 3/3/3）
+   - `order` 出现"同一人连续两条"或非 round-robin 反例
+   - 0 console error，无 meta leak
+6. commit + push
+7. `vercel --prod`
+8. 线上 Playwright 跑同场，对比 `1c25f60` 那场是否更不均、更互相 @
+9. handoff 追加本轮结果
+
+总改动量估：**~80 行 prompt 重写 + 1 行 temperature 改 + handoff 追加**。
+
+### 风险监控点
+
+1. LLM 完全自由后某场可能偷懒（某位只说一句空话）→ 缓解：观察几场后若稳定出现，再补 1 条最小约束
+2. `mentalModels` 偶尔出现 vault 外 name → 缓解：parser 加 fallback 标 `discrepancy`（spec v5.4 已留字段）
+3. Vercel 60s 超时：prompt 短了 → discussion 可能更长；理论上仍 <60s（qwen3-max ~50 tok/s × 2000 字 ≈ 50s），观察实际
+
+### 新会话第一指令建议
+
+```
+读 /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1/docs/superpowers/handoff.md
+和 ~/.claude/plans/ai-ai-fancy-glade.md，然后实施 "Council prompt 精简"。
+```
+
+工作目录 clean、commit `1c25f60` 已推、48 tests / lint / build 全绿，可直接动手。
