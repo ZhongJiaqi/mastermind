@@ -921,3 +921,101 @@ scrollY 1713 / bodyHeight 2496（已滚到底）→ 左栏 viewport top 63.75px 
 
 **Sprint 1 + Sprint 4 + sticky UI 全部 ship。今日总 commits：11（含 sticky 这一档 `fc1c0d0`）。
 完整 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0`。**
+
+---
+
+## 2026-04-29（凌晨）· Sprint 5 Round 1 · 军师质量回炉
+
+**Commit**：`6da5ae8` (fix: prompt + vault — Sprint 5 round 1)
+**线上**：`https://mastermind-gamma-weld.vercel.app`（已 deploy + audit 验证）
+
+### 跑了什么
+
+写了 `/tmp/audit-runner.mjs` 批量 6 场决策（跨投资 / 创业 / 情感 / 谈判 / 职业 / 日常 6 个领域），每场 27-42s 完成，dump 到 `/tmp/audit-results.json` 系统 review。
+
+### Round 0 发现的 3 类问题
+
+| 类 | 现象 | 严重度 |
+|---|---|---|
+| 1 | **advisorId hallucinate** — LLM 把 vault id `buffett` 输出成 `warren_buffett`、`caocao` 成 `cao_cao`、`zhenhuan` 成 `Zhen Huan`（首字母+空格）。客户端 cards 的 advisorId 跟 vault 不对齐 | latent bug，影响数据完整性 |
+| 2 | **vault 教条化 / 模型名当口头禅** — 巴菲特 5/5 场必喊"安全边际"、芒格 4/5 场"反过来想"开场、甄嬛 4/5 场必引"宁可枝头抱香死"、马斯克 5/5 场"白痴指数" | 影响内容自然度 |
+| 3 | **轻问题被过度严肃化** — "今晚吃日料还是火锅"被芒格分析"食物中毒概率"，张小龙说"不希望吃饭变成表演" | 影响日常 UX |
+
+Bonus：**甄嬛"陛下…哦不，先生"穿越破戏**（场 5 出现）。
+
+### Round 1 修复
+
+**`api/_shared/prompts/council.ts`**（修类 1 + 类 2 + 类 3）：
+- advisor 块标题加 `id: \`{id}\``，让 LLM 看到精确字符串
+- conclusions schema `advisorId` 描述明确：使用上方 id 后字符串，不要变形为 `warren_buffett` / `cao_cao` / `Zhen Huan` 等
+- 约束段加 3 条：
+  - `advisorId` 严格使用 id: 后字符串区分大小写（修类 1）
+  - 不要把同一模型名当口头禅反复念（修类 2）
+  - 问题轻松时（日常吃喝）发言也要轻松短促，不要升级为人生哲学（修类 3）
+
+**`advisors/zhenhuan/SKILL.md`** S 段加：
+- 不要刻意搞"陛下…哦不，先生"穿越笑点；用"先生""这位""大人"替代"陛下"，"职场""家中"替代"宫里"
+
+**`advisors/trump/SKILL.md`** 暂不动——他的 vault 已经写得很到位（极简大词、tremendous/huge、结论先行），LLM 输出已含 Tremendous/Think Big/BAD DEAL 等关键元素。
+
+### Round 1 实测结果（同 6 场重跑）
+
+| 指标 | Round 0 baseline | Round 1 修复后 |
+|---|---|---|
+| advisorId 匹配 | 5/6 场 hallucinate | **6/6 场全对齐** ✅ |
+| 甄嬛穿越破戏 | 1 场出现 | **0 场** ✅ |
+| 巴菲特 vault 关键词频率（场均） | 4-5 次 | 2-4 次 ↓ |
+| 张小龙情感场关键词 | 多次"用户体验/同理心/克制" | **0 次** ✅ |
+| 轻决策严肃度 | 芒格"食物中毒概率"+ 张小龙"吃饭变表演" | "问问大家""开心最重要""看天气和心情" ✅ |
+| 单场用时 | 27-42s | 25-41s（持平） |
+
+**Round 1 轻决策实例对比**：
+
+Round 0:
+> 芒格：日料的食材新鲜度是高风险变量，一旦不新鲜，整晚心情归零。火锅的食材经过高温煮沸，生物风险极低...
+> 张小龙：我不希望吃饭变成一种表演或任务...
+
+Round 1:
+> 芒格：先别急着选。反过来想：怎么才能让这顿饭吃得最难受？如果朋友里有肠胃敏感的，火锅就是灾难。还有，看看激励机制——是谁提议的？
+> 张小龙：那就看天气和心情吧。如果觉得累，想吃点不用动脑子的、热闹的，就火锅。如果想静静聊聊天，就日料。别让选择变成负担，**吃完就走，开心最重要**。
+
+### 仍可优化（Round 2 候选，本次先 hold）
+
+- **段永平在投资主场仍 7 次** vault 关键词——他是价值投资 archetype，可以理解；非主场场景已降到 4 次以下
+- **巴菲特情感场仍 4 次** vault 关键词——他擅长把情感金融化，已比 round 0 减少
+- **trump 中英夹杂仍偏少**：vault S 段已写"极简大词 tremendous/huge"，但 LLM 出于中文语境很少混入英文。可以试在 S 段加更显式约束"每段必带 1-2 个英文大词"
+- **discussion 仍偏 round-robin**：按用户"按原项目来"指令保持现状
+
+### 当前验证状态
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 12 files / 57 tests 全绿
+npm run build   # 153.88 kB gzipped JS
+npm run smoke -- https://mastermind-gamma-weld.vercel.app  # 持续 PASS
+node /tmp/audit-runner.mjs  # 6 场审计 25-41s 全 PASS / advisorId 6/6 对齐
+```
+
+### Sprint 5 状态
+
+🟢 Round 1 ship（latent bug + 教条化 + 轻问题 三档修完）
+⚪ Round 2（深度打磨）—— 看用户后续是否需要
+
+### 剩余任务（更新优先级）
+
+🟢 **低优先级 / 清理**
+- `.env.example` 默认 `qwen3-max` → `qwen3.6-max-preview`
+- spec `qwen3-plus` / `qwen3-max` 引用更新
+- main 分支同步（`0d9c928 chore: ignore .worktrees directory` 未 push）
+- `feat/mastermind-v1` → main PR / 合并
+
+⚪ **Plan §风险点留白**
+- Round-robin 完全破除（V5 风格档位 hint）—— 用户接受现状
+- DashScope 配额 2026-07-20 到期监控
+- Sprint 5 Round 2（trump 中英夹杂强化 / 巴菲特情感场金融化压制）—— 看需要
+
+---
+
+**Sprint 5 Round 1 完成。本轮 commits：`6da5ae8`（prompt+vault 修复）+ handoff 追加。
+今日累计 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0` → `e1c0618` → `6da5ae8`（共 14 commits）。**
