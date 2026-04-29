@@ -12,6 +12,7 @@ export const ADVISOR_COLORS: Record<string, string> = {
   cialdini: 'bg-yellow-100 text-yellow-800 border-yellow-200',
   kahneman: 'bg-cyan-100 text-cyan-800 border-cyan-200',
   holmes: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+  aurelius: 'bg-stone-200 text-stone-900 border-stone-300',
 };
 
 export const DEFAULT_ADVISOR_COLOR = 'bg-stone-100 text-stone-800 border-stone-200';
