@@ -57,7 +57,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans selection:bg-stone-200">
       <header className="border-b border-stone-200 bg-white/80 backdrop-blur-md sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
           <div className="w-10 h-10 bg-stone-900 text-white rounded-xl flex items-center justify-center shadow-sm">
             <BrainCircuit size={24} />
           </div>
@@ -68,9 +68,9 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 lg:py-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
         {/* Left Column: Input */}
-        <div className="lg:col-span-5 space-y-8">
+        <div className="lg:col-span-5 space-y-6 lg:space-y-8">
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-500">
@@ -184,7 +184,7 @@ export default function App() {
 
         {/* Right Column: Results */}
         <div className="lg:col-span-7">
-          <div className="bg-white border border-stone-200 rounded-3xl p-6 md:p-8 min-h-[600px] shadow-sm">
+          <div className="bg-white border border-stone-200 rounded-2xl lg:rounded-3xl p-4 sm:p-6 md:p-8 min-h-[400px] lg:min-h-[600px] shadow-sm">
             {!hasContent && !isRunning ? (
               <EmptyState />
             ) : (
