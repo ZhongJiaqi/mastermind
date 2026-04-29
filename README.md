@@ -1,10 +1,8 @@
 # Mastermind 智囊团
 
-> 顶级思维决策模拟器——把芒格、巴菲特、马斯克、张小龙、曹操、甄嬛等人物的心智模型注入到一场圆桌会议里，针对你的决策问题碰撞讨论，给出每位军师的最终决策卡。
+> 顶级思维决策模拟器——把芒格、巴菲特、马斯克、乔布斯、卡尼曼、奥勒留、福尔摩斯等人物的心智模型注入到一场圆桌会议里，针对你的决策问题碰撞讨论，给出每位军师的最终决策卡。
 
 **线上**：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app)
-
-![banner](https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6)
 
 ## 设计取向
 
