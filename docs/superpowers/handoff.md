@@ -689,3 +689,108 @@ npm run build   # 147.7 kB gzipped JS
 ---
 
 **收口轮次完成。Council 链路从 70-90s 压到 46s（线上）/ 42s（dev），4 commit 一条命令链：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a`。**
+
+---
+
+## 2026-04-29（夜）· Sprint 4 三档并行收口
+
+**Commit chain**：`dca8e20` (ErrorBanner) → `8f47e7c` (mobile) → `93299d0` (parser fix + smoke E2E)
+**线上**：`https://mastermind-gamma-weld.vercel.app`（已 deploy + smoke 验证）
+**测试现状**：12 files / 57 tests 全绿（+9 tests vs 上轮）
+
+### 第 1 档 · ErrorBanner 错误态 UI（`dca8e20`）
+
+**新增** `src/components/ErrorBanner.tsx`（101 行）：
+- 启发式映射：错误文本 → 友好标题 + 提示
+  - DASHSCOPE_API_KEY missing → "服务暂时不可用"
+  - quota exhausted → "模型额度已耗尽"
+  - timeout → "请求超时"（提示简化问题）
+  - network/fetch fail → "网络异常"
+  - JSON parse → "军师返回格式异常"
+  - fallback → 显示原始 message
+- [重试] 按钮（仅服务端错误显示，前端校验错误隐藏）
+- [关闭] 按钮 + 右上角 X icon
+- role=alert + motion AnimatePresence 进出动画
+
+**测试**：`tests/unit/ErrorBanner.test.tsx` 8 测覆盖每条启发式分支 + raw fallback。`vitest.config.ts` include 加 `.tsx` 支持。
+
+**集成**：`src/App.tsx` 替换原 inline 红色文本块，retry 调 handleConsult，dismiss 调 reset。
+
+### 第 2 档 · 移动端 responsive（`8f47e7c`）
+
+最小响应式 tweak（375px 断点 pass），全部是给现有 Tailwind 类加 sm:/lg: prefix：
+
+| 类 | 改动 |
+|---|---|
+| 主容器 padding | `px-6` → `px-4 sm:px-6` |
+| main 上下 padding | `py-8` → `py-6 lg:py-8` |
+| main grid gap | `gap-8` → `gap-6 lg:gap-8` |
+| 左栏间距 | `space-y-8` → `space-y-6 lg:space-y-8` |
+| 右栏卡片 | `rounded-3xl p-6 md:p-8 min-h-[600px]` → `rounded-2xl lg:rounded-3xl p-4 sm:p-6 md:p-8 min-h-[400px] lg:min-h-[600px]` |
+
+### 第 3 档 · Parser fix + Smoke E2E（`93299d0`）
+
+**Parser fix** `src/lib/councilParser.ts`：
+- 实测 LLM（qwen3.6-max-preview）经常输出完 `]` 就停笔不写 `</conclusions>` 闭合 tag
+- 原 parser 严格要求闭合 → cards 永远 null → UI 显示 0 cards 是真 UX 退化
+- 修复：先匹配严格闭合 `<conclusions>...</conclusions>`，否则 fallback 到 `<conclusions>...$`（未闭合）。`parseConclusions` 的 JSON.parse 已 try/catch，流式中段还没写完 `]` 时 fallback 解析 fail 返 null——流式中无误判
+- Plan §"风险监控点 1" 实测命中（"LLM 完全自由后某场可能偷懒"），用 parser 容忍而非加 prompt 约束的方式解决——保持"按原项目来"精神
+- 新增 unit test 覆盖未闭合场景
+
+**Smoke E2E** `scripts/smoke.mjs`：
+- curl-based transport（Node 25 fetch 在 vercel.app 上偶发 connect timeout 60s+，curl happy-eyeballs 1s 就连得上）
+- 跑 POST /api/council 跳槽场（B+C+Z），验证：
+  - HTTP 200 / SSE done event 收到
+  - discussion + conclusions 双块存在（容忍 conclusions 未闭合）
+  - conclusions JSON 数组、长度 = 请求 advisor 数
+  - 每张 card 有 advisorId/characterName/conclusion/reasoning/mentalModels
+  - 请求的 advisorIds 全部出现在 cards
+  - discussion 至少 1 条 message
+- npm run smoke [host] 命令
+- **线上跑：42.2s / 6 messages / 2-2-2 / 3 cards / closed=false / OK** ✅
+
+### 实施踩坑
+
+1. **Node 25 undici fetch 在 vercel.app 上 connect timeout 60s+**：尝试 setGlobalDispatcher、fetch with dispatcher、family=4 IPv4 强制——全部 60s+ timeout。curl happy-eyeballs 1s 就连得上。最终 smoke 用 spawn curl 做 transport。根因不明（DNS 解析 OK / TCP 443 OK / curl OK），疑似 Node 25 undici 与 vercel.app SNI/TLS handshake 兼容问题。
+2. **`@testing-library/react` 没装、不动 lockfile**：ErrorBanner 单测改测 `toFriendly` 启发式映射纯函数（导出），UI render 留给手动 + smoke。
+3. **vercel env rm 默认交互 prompt yes/no**：批量改用 `--yes` flag。
+4. **OpenAI SDK 类型 strict**（上轮已踩）：`enable_thinking: false` 不能直接放 object literal——抽 `const params = {...} as Parameters<...>[0]` 绕过。
+
+### 仍未 commit（等用户 review）
+
+**`advisors/zhenhuan/SKILL.md`** 已写入磁盘 + zod 校验通过 + vault generator 已写入 9 advisors。等用户 review 4 段（M / Q / B / S）：
+- M: 7 个心智模型（隐忍后发制人、借力打力反杀、察言观色读深层、以退为进、联盟即性命、风骨与务实并重、诗词隐喻）
+- Q: 8 句代表语录（"宁可枝头抱香死"、"逆风如解意"等）
+- B: 7 条自觉边界
+- S: 10 条说话风格（半文言半白话、笑着说狠话、反问、对方话反给对方）
+
+### 当前验证状态（命令可复现）
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 12 files / 57 tests 全绿
+npm run build   # 153.45 kB gzipped JS
+npm run smoke -- https://mastermind-gamma-weld.vercel.app  # 线上 E2E 42s 全 PASS
+```
+
+### 剩余任务
+
+🟡 **中优先级**
+- Sprint 1.12 甄嬛 commit（等用户 review）
+- Sprint 5：军师质量回炉（5-10 场真实决策测试 → 调 vault）
+
+🟢 **低优先级 / 清理**
+- `.env.example` 默认 `qwen3-max` → `qwen3.6-max-preview`
+- spec `qwen3-plus` / `qwen3-max` 引用更新
+- main 分支同步（`0d9c928 chore: ignore .worktrees directory` 未 push）
+- `feat/mastermind-v1` → main PR / 合并
+
+⚪ **Plan §风险点留白**
+- Round-robin 完全破除（V5 风格档位 hint）—— 用户接受现状
+- DashScope 配额 2026-07-20 到期监控
+
+---
+
+**Sprint 4 三档完成 + prompt 链路收尾。线上稳定运行 42s，57 tests 全绿，smoke E2E 命令化。
+完整 commit chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0`（共 8 commits）。**
