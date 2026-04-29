@@ -54,7 +54,7 @@
 | `zhenhuan` | 甄嬛 | 隐忍 / 借力打力 / 以退为进 |
 | `holmes` | 夏洛克·福尔摩斯 | 演绎推理 / 排除法 / 观察细节 |
 
-4 位 fork 自社区 nuwa skills（munger / musk / buffett / duanyongping）；3 位 Claude-draft + 用户 review（trump / caocao / zhenhuan）；5 位参考社区资料 + Claude-draft（jobs / cialdini / kahneman / holmes / aurelius）。
+每位 vault 含 6-7 个心智模型 + 5-7 句代表语录 + 5-6 条自觉边界 + 8-10 条说话风格。具体素材来源见末尾 [致谢](#致谢)。
 
 ## 技术栈
 
@@ -88,15 +88,15 @@ npm run dev      # http://localhost:3000
 ### 命令清单
 
 ```bash
-npm run dev          # Vite dev server（含 dev-api plugin 模拟 Vercel edge function）
+npm run dev          # 本地开发服务器（前后端一体，自动 mock edge function 路由）
 npm run build        # 生产构建
 npm run preview      # 预览构建产物
-npm run lint         # tsc --noEmit 类型检查
-npm run test         # vitest run（57 tests）
-npm run test:watch   # vitest watch
+npm run lint         # 类型检查
+npm run test         # 单元 + 集成测试
+npm run test:watch   # watch 模式
 npm run test:cov     # 覆盖率
-npm run smoke [host] # E2E smoke 测一场跳槽决策（默认 localhost:3000）
-npm run gen:advisors # 手动重新生成 vault（pre-dev/build/test 自动跑）
+npm run smoke [host] # E2E 测一次完整 council 调用（默认 localhost:3000）
+npm run gen:advisors # 重新生成 vault（dev/build/test 时自动跑，通常无需手动）
 ```
 
 ## 环境变量
@@ -132,10 +132,10 @@ vercel --prod
 
 ```
 mastermind/
-├── advisors/                 # 9 位军师 vault（每位一个 SKILL.md）
+├── advisors/                 # 12 位军师 vault（每位一个 SKILL.md）
 ├── api/                      # Vercel Edge Functions
 │   ├── council.ts           # 单次 SSE 调用同时演多位军师
-│   ├── intake-clarify.ts    # 主持人追问（MVP 已 bypass）
+│   ├── intake-clarify.ts    # 主持人追问（暂未启用，预留接口）
 │   └── _shared/             # SSE / 错误响应 / Zod schemas / prompts
 ├── src/
 │   ├── components/          # ErrorBanner / ...
@@ -165,9 +165,7 @@ mastermind/
 - `duanyongping` ← [zwbao/duan-yongping-skill](https://github.com/zwbao/duan-yongping-skill)
 - `kahneman` / `aurelius` ← [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) 的 council-kahneman.md / council-aurelius.md
 - `holmes` ← [NimritaKoul/sherlock-holmes-agent-skill](https://github.com/NimritaKoul/sherlock-holmes-agent-skill)
-- `cialdini` ← Robert Cialdini 著《Influence》6+1 原理（无现成 vault，原创起草）
-
-原项目脚手架：[ZhongJiaqi/mastermind](https://github.com/ZhongJiaqi/mastermind)（Google AI Studio 生成的 Gemini 单次调用版）
+- `cialdini` ← Robert Cialdini 著《Influence》6+1 原理
 
 ## License
 
