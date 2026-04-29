@@ -35,11 +35,18 @@ export default async function handler(req: Request): Promise<Response> {
 
     const models = getDashScopeModels();
     const client = createDashScope();
-    const completion = await client.chat.completions.create({
+    // DashScope-specific 顶层参数 enable_thinking: false（关闭 Qwen3.x reasoning，
+    // 省时间和 token）。OpenAI SDK 类型不识别，故 cast 整个调用。
+    const completion = (await (
+      client.chat.completions.create as (params: unknown) => Promise<{
+        choices: Array<{ message?: { content?: string | null } }>;
+      }>
+    )({
       model: models.host,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-    });
+      enable_thinking: false,
+    }));
     const content = completion.choices[0]?.message?.content ?? '';
     let parsedResult: unknown;
     try {

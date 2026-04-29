@@ -38,8 +38,11 @@ export default async function handler(req: Request): Promise<Response> {
   return createStreamedResponse(async (write) => {
     let fullText = '';
     try {
-      const stream = await client.chat.completions.create({
-        // Analyst 模型（qwen3-max）——需要在一次调用里同时演多人 + 输出结构化 JSON，质量优先。
+      // DashScope-specific 顶层参数 enable_thinking: false——关闭 Qwen3.x reasoning
+      // 阶段。reasoning 会先吐 ~30s thinking 才输出 content，Vercel edge function
+      // 60s maxDuration 会被 thinking 吃光，client 收不到任何 chunk。OpenAI SDK 类型
+      // 不识别此参数，故用宽松类型组装 params。
+      const params = {
         model: models.analyzer,
         messages: [
           {
@@ -51,7 +54,9 @@ export default async function handler(req: Request): Promise<Response> {
         ],
         stream: true,
         temperature: 0.9,
-      });
+        enable_thinking: false,
+      } as Parameters<typeof client.chat.completions.create>[0];
+      const stream = await client.chat.completions.create(params);
       for await (const chunk of stream as AsyncIterable<{
         choices: Array<{ delta: { content?: string } }>;
       }>) {
