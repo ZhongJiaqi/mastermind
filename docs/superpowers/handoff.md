@@ -1071,3 +1071,131 @@ node /tmp/audit-runner.mjs  # 6 场审计 25-41s 全 PASS / advisorId 6/6 对齐
 
 **今日 Mastermind v1 完整 ship + PR 创建。
 最终 chain（共 16 commits）：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0` → `e1c0618` → `6da5ae8` → `fcfa254` → `e28e98e`。**
+
+---
+
+## 2026-04-29（深夜后）· PR #1 merged + README rewrite + Sprint 6（12 位军师）
+
+会话尾段连续 ship 5 个 PR 把 main 同步到完整 v1 + 扩展到 12 位军师。
+
+### PR #1 → merged（main 同步到 v1）
+
+- `gh pr merge 1 --merge` → `daf14f8 Merge pull request #1`
+- main 从原项目 Gemini 单次调用版（3 commits）跳跃到完整 Qwen v1（含 9 位军师 + sticky UI + Sprint 5 round 1）
+- README 之前是 AI Studio 模板，会话尾**完整重写**：项目介绍 / 9 位军师 / 设计取向 / 技术栈 / 开发命令 / 部署步骤 / 添加新军师 4 步指南 / 项目结构图 / 致谢
+
+### Sprint 6 Round 1 · 4 位新军师入仓（PR #2 merged）
+
+- **`jobs`**（史蒂夫·乔布斯）：fork 自 [alchaincyf/steve-jobs-skill](https://github.com/alchaincyf/steve-jobs-skill) 重构为 M/Q/B/S 4 段
+  - 6 心智模型：反市调 / 减法即设计 / 交叉学科 / 现实扭曲力场 / A 级人才 / 端到端整合
+- **`cialdini`**（罗伯特·西奥迪尼，《影响力》作者）：基于书原创起草（无社区现成）
+  - 7 心智模型：互惠 / 承诺一致 / 社会认同 / 喜好 / 权威 / 稀缺 / 联盟（Unity）
+- **`kahneman`**（丹尼尔·卡尼曼）：参考 [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) council-kahneman.md 重构
+  - 6 心智模型：系统 1/2 / 锚定 / 损失厌恶 / 可得性启发 / 计划谬误 / WYSIATI
+- **`holmes`**（夏洛克·福尔摩斯）：参考 [NimritaKoul/sherlock-holmes-agent-skill](https://github.com/NimritaKoul/sherlock-holmes-agent-skill) 重构
+  - 6 心智模型：排除不可能 / 数据先于理论 / 观察 vs 看见 / 演绎链 / 不轻信表象 / 知识专精
+
+`src/constants.ts` 加 4 配色（zinc / yellow / cyan / indigo）。
+
+实测线上（4 位同台跑"AI 写作工具创业"）：46s / 8 messages / 2-2-2-2 / 4 cards JSON valid / vault 完美 fire（jobs "Notion AI 是通用领域的诺基亚，臃肿、平庸、毫无灵魂" / cialdini 4 个原理具体应用 / kahneman 5 工具链 / holmes "排除显而易见即真相"）/ 互动 @ 多次。
+
+### 删除 2 位（PR #3 merged · 用户决定）
+
+按用户要求删 `zhangxiaolong` 和 `zhangyiming`：
+- 删除 `advisors/zhangxiaolong/` `advisors/zhangyiming/` 整个目录
+- `src/constants.ts` 移除两位的 ADVISOR_COLORS
+- `README.md` 同步：13 → 11 位
+
+总数：13 → 11。
+
+### Sprint 6 Round 2 · Aurelius 入仓（PR #4 merged）
+
+用户决定加 `aurelius`（马可·奥勒留）填补"内在修养型"维度——现 11 位都没法处理"焦虑、逆境、不可控"类问题。
+
+- **`aurelius`**：参考 council-aurelius.md + 《沉思录》原文重构
+  - 6 心智模型：控制圈三重区分 / 朝死而生 Memento Mori / Obstacle is the Way 逆境即素材 / 自省日记 / 同理心源于"我们都是人" / 理性是人独有资产
+  - 6 句代表语录全部来自《沉思录》（"You have power over your mind not outside events" / "The impediment to action advances action" 等）
+  - 6 条自觉边界（含"结构性不公面前可能变成自我安慰""'逆境即素材' 会被滥用为不作为借口"等真实警觉）
+  - 9 条说话风格（简短有力 / 不空说鸡汤给具体动作 / 区分困难 vs 不可能 / 直击道德责任）
+  - 配色：bg-stone-200（朴素灰，斯多葛克制气质）
+
+实测精神困境场景（"父亲突发脑出血住院 ICU，焦虑得无法工作"，配 kahneman + zhenhuan）：38s / 6 messages / 2-2-2 / 3 cards JSON valid。Aurelius 完美 fire：
+> "停下。你现在的焦虑，是在试图控制'父亲的预后'和'老板的评价'，这两者皆不在你手中..."（控制圈）
+> "若这是最后一周，你会如何陪伴？若这是最后的机会，你会如何交代工作？"（朝死而生）
+> "甄嬛说得有几分道理，但核心仍是德行..."（直接 @ + 道德责任）
+
+### Smoke fix（PR #5 merged）
+
+PR #3 删 zhangxiaolong 后 `scripts/smoke.mjs` payload 还在引用，server filter 后只剩 2 位 advisor，LLM 正确输出 2 cards 但 smoke 误报 'expected 3 got 2' 失败。改为 `zhenhuan`。
+
+### 12 位最终阵容
+
+```
+🏛 哲学/修养    aurelius (马可·奥勒留)              ⭐ 最新
+
+🏦 投资/战略    buffett / munger / duanyongping
+🚀 创业/产品    musk / jobs
+🧠 心理/影响力  cialdini / kahneman
+⚔️ 政治/谈判    caocao / trump
+🎭 文学/虚构    zhenhuan / holmes
+```
+
+来源：4 位 fork（munger / musk / buffett / duanyongping）+ 3 位 Claude-draft + 用户 review（trump / caocao / zhenhuan）+ 5 位参考社区资料 + Claude-draft（jobs / cialdini / kahneman / holmes / aurelius）。
+
+### 5 个 PR 全部合并（main 同步完整）
+
+| PR | 内容 | merge commit |
+|---|---|---|
+| #1 | Mastermind v1（63 commits 跨架构迁移 / 9 位军师 / Sprint 4 / Sprint 5 round 1） | `daf14f8` |
+| #2 | 4 位新军师 + README 13 位 | `679758d` |
+| #3 | 删 zhangxiaolong + zhangyiming | `0330076` |
+| #4 | Aurelius 入仓 + README 12 位 | `cd77367` |
+| #5 | smoke fix | `ba2a31b` |
+
+main 现 = origin/main = feat/mastermind-v1 完全同步。
+
+### 当前线上 / 命令
+
+```bash
+线上：https://mastermind-gamma-weld.vercel.app（12 位军师可用）
+
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 12 files / 57 tests 全绿
+npm run build   # 168 kB gzipped JS（含 12 位 vault）
+npm run smoke -- https://mastermind-gamma-weld.vercel.app  # PASS（38s / 3 cards）
+```
+
+### 已知未解决
+
+🟡 **DashScope 配额监控**：`qwen3.6-max-preview` 100 万 token 免费配额 **2026-07-20 到期**。届时需切按量付费或换其他可用模型。
+
+⚪ **Latent bugs（用户接受现状）**：
+- 单 advisor 调用时 LLM 偶发 hallucinate advisorId（如 `warren_buffett` 不是 `buffett`）—— 多位调用时 prompt 改进后已对齐
+- discussion 倾向 round-robin 节奏（实测跨模型 family 都这样，原项目同样）—— "按原项目来"接受
+- LLM 偶发不闭合 `</conclusions>`tag —— parser 已加 fallback 容忍
+
+### 下次会话起点
+
+**所有功能层 ship + 测试覆盖 + 文档更新完毕。** 下次会话可选方向：
+
+1. **Sprint 5 Round 2**（深度打磨）：trump 中英夹杂强化 / 巴菲特情感场金融化压制 / 已有 11 位的 vault 二轮回炉
+2. **新增军师**：候选清单（Naval Ravikant / Linus Torvalds / Donella Meadows / 塔勒布 / 费曼 / 王阳明 / 苏格拉底 / 老子）
+3. **功能扩展**：会议存档列表 UI / 分享链接 / multi-language vault / 导出 Markdown 决策报告
+4. **运维**：DashScope 配额监控告警 / 切换备用模型预案 / 移到自有 LLM
+
+无紧急 blocker。线上服务稳定运行。
+
+### 起手指令建议（新会话）
+
+```
+读 /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1/docs/superpowers/handoff.md
+末尾"2026-04-29（深夜后）· PR #1 merged + README rewrite + Sprint 6（12 位军师）"段
+确认现状，然后讨论下一步走哪条。
+```
+
+工作目录 clean、main 与 feat 同步、12 位军师线上可用、57 tests / lint / build / smoke 全绿，可以从任何方向起手。
+
+---
+
+**Sprint 6 完整结束。今夜累计 22 commits（PR #1-#5 全 merged）。Mastermind 12 位军师阵容稳定线上。**
