@@ -877,3 +877,47 @@ npm run smoke -- https://mastermind-gamma-weld.vercel.app  # 线上 E2E 全 PASS
 
 **Sprint 1（9 位军师）+ Sprint 4 三档全部封闭。
 本轮总 commits：`23c70e3` (甄嬛入仓)。完整今日 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3`（共 10 commits）。**
+
+---
+
+## 2026-04-29（深夜尾声）· UI sticky 左栏
+
+**Commit**：`fc1c0d0` (feat: make left input panel sticky on lg screens)
+**线上**：已 deploy + Playwright 验证
+
+### 问题
+
+讨论加 final cards 内容长时，桌面端右栏延续滚动，左栏保留为短表单——形成"右长左短"布局空洞，且用户读到底部想改问题/换军师必须滚回顶部。
+
+### 修复
+
+`src/App.tsx` 左栏 div 加 6 个 lg: 前缀类，移动端零影响：
+
+```diff
+- <div className="lg:col-span-5 space-y-6 lg:space-y-8">
++ <div className="lg:col-span-5 space-y-6 lg:space-y-8 lg:sticky lg:top-20
++                 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-2">
+```
+
+- `lg:sticky lg:top-20`：≥1024px 时左栏滚动吸附在 viewport top 80px 处（让出 header sticky bar 的 ~64px）
+- `lg:self-start`：grid item 默认 stretch 满高度会破坏 sticky；self-start 让其自然高度
+- `lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto`：左栏内容若超视口则内嵌滚动条，不会顶出
+- `lg:pr-2`：给内嵌滚动条留缝
+
+### Playwright 验证
+
+scrollY 1713 / bodyHeight 2496（已滚到底）→ 左栏 viewport top 63.75px ✅
+
+截图确认：
+- 左栏（输入框 + 8 张军师卡片含高亮）保持在视口左侧不动
+- 右栏 discussion 滚到第 5 条以下
+- 甄嬛 "借力打力" + "以退为进" vault 完美 fire on 跳槽场
+
+### 移动端零回归
+
+`lg:` prefix 仅 ≥1024px 触发，移动端仍保持原单列流式（左栏在上 / 右栏在下），无 sticky / 无滚动嵌套。
+
+---
+
+**Sprint 1 + Sprint 4 + sticky UI 全部 ship。今日总 commits：11（含 sticky 这一档 `fc1c0d0`）。
+完整 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3` → `12267ed` → `fc1c0d0`。**
