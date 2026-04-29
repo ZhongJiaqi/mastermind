@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useMeeting } from './hooks/useMeeting';
 import type { DiscussionMessage, DecisionCard } from './types/session';
+import { ErrorBanner } from './components/ErrorBanner';
 
 export default function App() {
   const { state, start, reset } = useMeeting();
@@ -158,11 +159,27 @@ export default function App() {
             )}
           </button>
 
-          {displayError && (
-            <div className="p-4 bg-red-50 text-red-700 rounded-xl text-sm border border-red-100">
-              {displayError}
-            </div>
-          )}
+          <AnimatePresence>
+            {displayError && (
+              <ErrorBanner
+                key="error-banner"
+                message={displayError}
+                onRetry={
+                  // 仅服务端错误支持重试；前端校验错误（localError）只需关闭后重新填表
+                  session.analysis.error
+                    ? () => {
+                        setLocalError(null);
+                        void handleConsult();
+                      }
+                    : undefined
+                }
+                onDismiss={() => {
+                  setLocalError(null);
+                  if (session.analysis.error) reset();
+                }}
+              />
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Right Column: Results */}

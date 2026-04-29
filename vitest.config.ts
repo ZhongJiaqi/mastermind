@@ -4,7 +4,10 @@ import path from 'path';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
+    include: [
+      'tests/unit/**/*.test.{ts,tsx}',
+      'tests/integration/**/*.test.{ts,tsx}',
+    ],
     passWithNoTests: true,
     setupFiles: ['tests/setup/jsdom-localstorage.ts'],
     coverage: {
