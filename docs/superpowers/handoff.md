@@ -1199,3 +1199,51 @@ npm run smoke -- https://mastermind-gamma-weld.vercel.app  # PASS（38s / 3 card
 ---
 
 **Sprint 6 完整结束。今夜累计 22 commits（PR #1-#5 全 merged）。Mastermind 12 位军师阵容稳定线上。**
+
+---
+
+## 2026-04-29（结尾）· README 4 轮外部友好化打磨（PR #7-#9）
+
+PR #6（handoff 自身记录）merged 后用户审 README，发现仍有"开发笔记残留"——README 是给外部读者/潜在贡献者看的，不该有黑话和负面 framing。连续 3 个小 PR 打磨：
+
+### PR #7（merged `0d738a0`）· 去掉 AI Studio banner
+
+- 删除顶部 user-attachments banner（Google AI Studio 默认模板生成的图）
+- 介绍句举例从 "芒格 巴菲特 马斯克 张小龙 曹操 甄嬛"（含已删的张小龙）改为 "芒格 巴菲特 马斯克 乔布斯 卡尼曼 奥勒留 福尔摩斯"——5 主题分组各取代表
+
+### PR #8（merged `98ec5c2`）· 优化设计取向段
+
+设计取向第 4 条 `**不预设 round-robin 节奏**——但 LLM 倾向轮流发言（实测原项目同模型也这样）` 是开发观察笔记 + 黑话术语 + 负面 framing，**整条删除**。剩余 3 条改写得更具体：
+- 心智模型本质论：举巴菲特 安全边际/能力圈/复利 作具象例子
+- vault 结构：强调 B 段（自觉边界）的反盲区作用
+- 单次 LLM 调用：圆桌讨论卖点（互相 @ / 当面反驳 / 一次响应给齐）
+
+### PR #9（merged `4b38900`）· 通读扫除 7 处开发笔记残留
+
+| 处 | Before | After |
+|---|---|---|
+| 12 位军师段末尾 | "4 位 fork / 3 位 Claude-draft / 5 位..." 开发分类 | vault 内容统计 + 指向致谢 |
+| 命令注释 | `tsc --noEmit` / `vitest run (57 tests)` 等黑话 | 简化为"类型检查" / "单元 + 集成测试"等 |
+| smoke 注释 | "测一场跳槽决策" | "测一次完整 council 调用" |
+| 项目结构 | "9 位军师 vault"（stale） | "12 位军师 vault" |
+| 项目结构 | "MVP 已 bypass" | "暂未启用，预留接口" |
+| 致谢段 | cialdini "（无现成 vault，原创起草）" | 删除批注 |
+| 致谢段 | "原项目脚手架：ZhongJiaqi/mastermind（AI Studio 生成 Gemini 版）" | 删除（仓库就是 ZhongJiaqi/mastermind 自引用无意义） |
+
+### 给下次会话的提示
+
+**README 已经是审过的对外版本**——下次不要再以为它是"初稿"重新优化。如果要改 README，先想清楚是技术性改动（新增功能反映）还是风格性改动（避免再回到开发笔记 framing）。
+
+handoff.md（本文件）跟 README **目的相反**——这里**就是**开发笔记，可以放心写黑话/负面观察/自审，是给下次会话的 Claude 看的。
+
+### 最终 main 状态
+
+```
+main HEAD: 4b38900 Merge pull request #9
+今晚累计 commits: 25（PR #1-#9 全 merged）
+线上: 12 位军师 / 稳定运行 / smoke PASS
+```
+
+---
+
+**全部收尾完成。** README 干净对外、main 同步、handoff 完整记录、memory 已加 mastermind 条目。可以放心清空会话开新会话。
