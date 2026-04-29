@@ -10,6 +10,10 @@ export const ADVISOR_COLORS: Record<string, string> = {
   zhenhuan: 'bg-purple-100 text-purple-800 border-purple-200',
   trump: 'bg-amber-100 text-amber-800 border-amber-200',
   zhangyiming: 'bg-sky-100 text-sky-800 border-sky-200',
+  jobs: 'bg-zinc-100 text-zinc-800 border-zinc-200',
+  cialdini: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+  kahneman: 'bg-cyan-100 text-cyan-800 border-cyan-200',
+  holmes: 'bg-indigo-100 text-indigo-800 border-indigo-200',
 };
 
 export const DEFAULT_ADVISOR_COLOR = 'bg-stone-100 text-stone-800 border-stone-200';
