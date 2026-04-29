@@ -104,15 +104,27 @@ function parseConclusions(block: string): DecisionCard[] | null {
 
 /**
  * 输入：LLM 累积到目前为止的 fullText。可以未闭合（流式中段）。
- * 输出：解析出的 messages 和 cards（cards 只在 <conclusions>...</conclusions> 完全闭合且 JSON 可解析时非 null）。
+ * 输出：解析出的 messages 和 cards（cards 在 <conclusions> 后能 parse 出有效 JSON 数组时非 null）。
+ *
+ * <conclusions> 的闭合宽容：LLM 实测偶发不写 </conclusions> 闭合 tag，直接以 `]` 结尾。
+ * 严格 regex 会让 cards 永远为 null → UI 0 cards。改为先匹配严格闭合，否则 fallback 到
+ * "<conclusions> 后到结尾"。parseConclusions 的 JSON.parse 已 try/catch，流式中段
+ * 还没写完 `]` 时 fallback 解析失败返 null——保持流式中无误判。
  */
 export function parseCouncilStream(fullText: string): CouncilParseResult {
   const discussionMatch = fullText.match(/<discussion>([\s\S]*?)(?:<\/discussion>|$)/);
-  const conclusionsMatch = fullText.match(/<conclusions>([\s\S]*?)<\/conclusions>/);
+  let conclusionsBody: string | null = null;
+  const closedMatch = fullText.match(/<conclusions>([\s\S]*?)<\/conclusions>/);
+  if (closedMatch) {
+    conclusionsBody = closedMatch[1];
+  } else {
+    const openMatch = fullText.match(/<conclusions>([\s\S]*)$/);
+    if (openMatch) conclusionsBody = openMatch[1];
+  }
 
   const messages = discussionMatch ? parseDiscussion(discussionMatch[1]) : [];
-  const cards = conclusionsMatch ? parseConclusions(conclusionsMatch[1]) : null;
-  const isComplete = Boolean(conclusionsMatch && cards);
+  const cards = conclusionsBody !== null ? parseConclusions(conclusionsBody) : null;
+  const isComplete = Boolean(cards);
 
   return { messages, cards, isComplete };
 }

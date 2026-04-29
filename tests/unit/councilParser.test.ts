@@ -75,6 +75,21 @@ describe('parseCouncilStream', () => {
     expect(r.messages[0].text).toBe('反过来想');
   });
 
+  it('tolerates unclosed </conclusions> when array bracket is closed', () => {
+    // 实测：LLM（qwen3.6-max-preview）经常输出完 `]` 就停，没写 </conclusions>。
+    // parser 应宽容，否则 UI cards = 0 是 UX 退化。
+    const text = `<discussion>
+芒格: 反过来想
+</discussion>
+
+<conclusions>
+[{"advisorId":"munger","characterName":"芒格","conclusion":"x","reasoning":"y","mentalModels":[{"name":"逆向思考","briefOfUsage":"反着想"}]}]`;
+    const r = parseCouncilStream(text);
+    expect(r.cards).not.toBeNull();
+    expect(r.cards).toHaveLength(1);
+    expect(r.isComplete).toBe(true);
+  });
+
   it('tolerates conclusions wrapped in ```json fence', () => {
     const text = `<discussion>
 芒格: 一句话
