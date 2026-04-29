@@ -515,3 +515,100 @@ npm run build  # 147.7 kB gzipped JS
 ```
 
 工作目录 clean、commit `1c25f60` 已推、48 tests / lint / build 全绿，可直接动手。
+
+---
+
+## 2026-04-29 · Council prompt 精简（已实施）
+
+**Commit chain**：`f85a3e9` (prompt slim-down) → `c68c909` (enable_thinking fix)
+**线上**：`https://mastermind-gamma-weld.vercel.app`（部署 ID `dpl_HkFjYdBQ6UuJS9xXFygpuZfma779`，alias 已切）
+
+### 改动总览
+
+**`api/_shared/prompts/council.ts`** 重写（净 -39 行，80 行重写）：
+- 删 plan 批准的 8 条行为准则、独立「心智模型目录」段、字数上限、顺序约束、串色提醒
+- 保留 vault M/Q/B/S 注入与 conclusions schema 描述、meta 陈述禁令
+- 加 3 条 plan 外最小约束（实测发现的 parser 工作前提）：
+  1. 不要引入"主持人"或其他名单外角色——防 vault 结构化人物卡诱导 LLM 自创 narrator
+  2. 必须先 `<discussion>` 后 `<conclusions>` 双块齐全——防 LLM 写完讨论段直接停
+  3. conclusions 必须严格 JSON 数组——防退化为 markdown-ish 列表
+
+**`api/council.ts`**：`temperature 0.7 → 0.9`
+
+**`api/council.ts` + `api/intake-clarify.ts`**：加 `enable_thinking: false`（DashScope 顶层参数）
+- 必要原因：新一代 Qwen3.x 默认开 reasoning，先吐 ~30s thinking 才输出 content
+- Vercel edge function 60s maxDuration 在 thinking 阶段就被吃光，client 收 0 chunk
+- OpenAI SDK 类型不识别此参数，用 `as Parameters<...>[0]` cast 绕过
+
+### 模型变更
+
+DashScope 账户 `qwen3-max` 系列免费配额全耗尽（包括 max / max-preview / max-2026-01-23 / qwen-turbo）。新可用配额来自 `qwen3.x.5/3.6` 系列。
+
+Vercel env 已切（用户操作）：
+- `MODEL_SYNTHESIZER` / `MODEL_ADVISOR` / `MODEL_HOST` → `qwen3.6-max-preview`
+- 100 万 token 免费 / 2026-07-20 到期
+
+`.env.example` 里旧的 `qwen3-max` 默认值过时，但 .env.local 用户实际值会优先——下个 sprint 顺手更新。
+
+### 实施踩坑
+
+1. **Vercel `--prod --yes` 被 hook 拦截**——`--yes` flag 触发 "Blind Apply" 防护。改用 interactive 形式 `vercel --prod` 即可（用户授权后我执行）。
+2. **`vercel env rm` 默认 prompt yes/no**——加 `--yes` flag 才能 batch 跳过。
+3. **OpenAI SDK 类型 strict**——`enable_thinking: false` 不能直接放 object literal（excess property check）；`@ts-expect-error` 也不能 silence 这种 error。最终方案：先组装 `const params = {...} as Parameters<typeof client.chat.completions.create>[0]` 再传入。
+4. **intake-clarify 的 cast 让 SDK 走 union 返回类型**——`.choices` 报 TS2339。改用 `client.chat.completions.create as (...) => Promise<{choices: [...]}>` 整调用 cast。
+
+### 控制变量实验数据点（plan 外探索）
+
+为回答用户两个核心质疑，跑了 5 个 prompt 变体 + 4 个模型对比：
+
+**Q1: 原项目（无角色框架、无 vault）会不会也 round-robin？**
+- 跑原项目极简 prompt + qwen3.5-plus → **6 messages / 2-2-2 严格 round-robin**
+- 结论：原项目跑 qwen 系列**也是 round-robin**，用户感受到的"动态碰撞感"应来自 Gemini-3-flash-preview 的不同模型倾向
+
+**Q2: 模型 family 影响吗？**
+- qwen3.5-plus / qwen3.6-max-preview / **deepseek-v4-pro**（不同 family）+ 当前 vault prompt → 全部 **9 messages / 3-3-3 严格 round-robin**
+- 结论：round-robin 不是 model family 问题，是 vault 结构化注入诱导（每位独立 ## 块 → LLM 走"对照表演"模式）
+
+**Q3: 加发言次数规则能打破吗？**
+- V3-导演分配：**8 messages / 3-3-2** ✅
+- V4-无角色框架+档位：**9 messages / 4-3-2** ✅
+- V5-主持+演员+档位：**7 messages / 4-2-1** ✅（最不均）
+- 结论：能。但用户明确指令"按原项目来"，**不采用**——接受 round-robin 是原项目精神
+
+### 线上量化对比（同问题：跳槽场，B+C+Z）
+
+| 指标 | `1c25f60`（旧 prompt + qwen3-max） | `c68c909`（新 prompt + qwen3.6-max-preview + thinking off） |
+|---|---|---|
+| Total messages | 9 | **10** |
+| 分布 | 3-3-3 严格 | **4-3-3**（巴菲特最后追加 1 条破严格 RR） |
+| Final cards | 3 | 3（含结论+推理+心智模型 list） |
+| vault 语录密度 | 一般 | 高（"安全边际"/"市场先生"/"老骥伏枥"/"用完即走"等贯穿） |
+| 互相 @ | 弱（独白拼接） | 强（"伯言虽善守却失于怯"/"小龙说得对"/"我同意小龙"/"哼保守！"） |
+| Console errors | - | **0** |
+| Meta leak | - | **无** |
+
+### 当前验证状态（命令可复现）
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 11 files / 48 tests 全绿
+npm run build   # 147.7 kB gzipped JS
+```
+
+线上 council 单场约 70-90s（≤Vercel 60s edge limit）—— **理论应砍但实际通过**，因 streaming 模式 Vercel 在第一个 chunk 输出后保持连接，60s 是 cold-start to first-byte 上限。后续 long-tail 可能仍超时——观察。
+
+### 已知不动的点（plan §风险点未触发）
+
+- **Round-robin 顽固**：4-3-3 比 3-3-3 进步但仍接近均匀。按用户指令接受。
+- **vercel.json maxDuration 60s 仍紧**：跨 question / advisor 数有时单场 >60s。建议升级 Vercel 计划或切 serverless function（300s）的 plan 留待 Sprint 5。
+
+### 剩余 / 下一步可选
+
+- **Sprint 5 候选**：round-robin 破除（V5 风格档位 hint 可一行加上）/ vercel maxDuration 提升 / qwen3.6 配额监控（2026-07-20 后续期）
+- **Sprint 4 残留**：移动端 responsive / 错误态 UI / rate limiting（不动）
+- **第 4 位 Claude-draft 军师**：甄嬛仍未起草（3/4 完成）
+
+---
+
+**Council prompt 精简轮次完成。线上 ship、48 tests / lint / build 全绿、量化指标超越 `1c25f60` baseline。**
