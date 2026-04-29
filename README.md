@@ -13,7 +13,7 @@
 - **单次 LLM 调用同时演多人**——相比 N 次独立调用，更贴近"AI 自导自演"的对话动态，能出现互相 @、反驳、追加。
 - **不预设 round-robin 节奏**——但 LLM 倾向轮流发言（实测原项目同模型也这样）。
 
-## 13 位军师
+## 11 位军师
 
 ### 投资 / 战略
 
@@ -29,8 +29,6 @@
 |---|---|---|
 | `musk` | 埃隆·马斯克 | 第一性原理 / 物理学思维 / 极致野心 |
 | `jobs` | 史蒂夫·乔布斯 | 极简偏执 / 交叉学科 / 现实扭曲力场 |
-| `zhangyiming` | 张一鸣 | Context / 算法思维 / 延迟满足 |
-| `zhangxiaolong` | 张小龙 | 同理心 / 极简主义 / 直击本质 |
 
 ### 心理 / 影响力
 
@@ -53,7 +51,7 @@
 | `zhenhuan` | 甄嬛 | 隐忍 / 借力打力 / 以退为进 |
 | `holmes` | 夏洛克·福尔摩斯 | 演绎推理 / 排除法 / 观察细节 |
 
-5 位 fork 自社区 nuwa skills（munger / musk / buffett / duanyongping / zhangyiming）；4 位 Claude-draft + 用户 review（zhangxiaolong / trump / caocao / zhenhuan）；4 位参考社区资料 + Claude-draft（jobs / cialdini / kahneman / holmes）。
+4 位 fork 自社区 nuwa skills（munger / musk / buffett / duanyongping）；3 位 Claude-draft + 用户 review（trump / caocao / zhenhuan）；4 位参考社区资料 + Claude-draft（jobs / cialdini / kahneman / holmes）。
 
 ## 技术栈
 
@@ -160,7 +158,7 @@ mastermind/
 社区参考来源：
 
 - `munger` / `musk` / `jobs` ← [alchaincyf/munger-skill](https://github.com/alchaincyf/munger-skill) + [alchaincyf/elon-musk-skill](https://github.com/alchaincyf/elon-musk-skill) + [alchaincyf/steve-jobs-skill](https://github.com/alchaincyf/steve-jobs-skill)
-- `buffett` / `zhangyiming` ← [josephway/humanstar](https://github.com/josephway/humanstar)
+- `buffett` ← [josephway/humanstar](https://github.com/josephway/humanstar)
 - `duanyongping` ← [zwbao/duan-yongping-skill](https://github.com/zwbao/duan-yongping-skill)
 - `kahneman` ← [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) 的 council-kahneman.md
 - `holmes` ← [NimritaKoul/sherlock-holmes-agent-skill](https://github.com/NimritaKoul/sherlock-holmes-agent-skill)
