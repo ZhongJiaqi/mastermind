@@ -794,3 +794,86 @@ npm run smoke -- https://mastermind-gamma-weld.vercel.app  # 线上 E2E 42s 全 
 
 **Sprint 4 三档完成 + prompt 链路收尾。线上稳定运行 42s，57 tests 全绿，smoke E2E 命令化。
 完整 commit chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0`（共 8 commits）。**
+
+---
+
+## 2026-04-29（深夜）· Sprint 1.12 封闭：甄嬛入仓
+
+**Commit**：`23c70e3` (feat: add 甄嬛 vault — Claude-draft 4/4)
+**线上**：`https://mastermind-gamma-weld.vercel.app`（已 deploy + 实战验证）
+**军师总数**：9 位（5 fork + 4 Claude-draft 全部完成）
+
+### 入仓内容（用户参与 review + 调整）
+
+frontmatter:
+- `id: zhenhuan` / `tagline: 隐忍 / 借力打力 / 以退为进`
+- `avatarColor: oklch(90% 0.06 340)`（粉色调）
+- `speakStyle: 半文言半白话 · 善引诗词典故 · 表面温柔含蓄实则锋利 · 多反问与暗示`
+
+**M（7 心智模型）**：
+1. 隐忍为先 / 后发制人
+2. 借力打力 / 用规则反杀
+3. 极致察言观色 / 读深层动机
+4. 以退为进 / 用低姿态换实质优势
+5. 联盟即性命 / 选准盟友比击败敌人重要
+6. 风骨与务实并重 / 守底线但不殉道
+7. 长线投资 / 用时间换确定性 ⭐ 用户选定（替换初稿"诗词隐喻"——后者属于说话方式而非决策方法论，归 S 段）
+
+**Q（6 句剧中甄嬛亲口台词）**：
+- 嬛嬛一袅楚宫腰（初见雍正自报名字，引蔡伸《一剪梅》）
+- 逆风如解意（倚梅园许愿，引崔道融《梅花》）
+- 宁可枝头抱香死（多次自况，引朱淑真《黄花》）
+- 愿得一心人（向皇上表达独占之爱，引卓文君《白头吟》）
+- 终究是错付了（莞莞类卿真相后幻灭名句）
+- 在这宫里有时候真心是很可笑的（情感本质领悟）
+
+**用户 review 删除的不严谨引用**：
+- ~~"颜色不齐人不齐"~~（出处不明确）
+- ~~"皇上您害得世兰好苦啊"~~（**华妃**说的，年世兰 = 华妃）
+- ~~"倚梅园那场雪夜"~~（观众概括，非剧中原话）
+
+### 线上实测（"老婆闺蜜暗中举报抢晋升名额"场景）
+
+35s 完成，6 messages，分布 2-2-2，3 cards JSON valid。**甄嬛 2 条都明显应用了 vault 的多个核心心智模型**：
+
+第 1 条：M1（隐忍后发制人）+ M4（以退为进）
+> 翻脸？那是下策。她既已暗中举报，便是撕破了脸皮...不如装作不知，静观其变...此时示弱，并非认输，而是为了看清她背后还有谁在撑腰。
+
+第 2 条：M2（借力打力）+ M7（长线投资）+ 直接 @ 曹操和巴菲特
+> 曹公说得痛快，但未免太过刚猛...与其主动出击，不如借 HR 之手，让她自食恶果...我们只需静静等待这把柄发酵，届时无需我们动手，局面自会反转。
+
+speakStyle 验证：半文言（"便""既""不如""自有""无需"）/ 反问开场（"翻脸？那是下策"）/ 笑着说狠话（"自食恶果""局面自会反转"）/ 直接 @ 对方（"曹公""巴先生"）。**vault 在 LLM 上完全 fire**，不是 SKILL.md 文本被忽略。
+
+### 已知 latent bugs（不在本轮 scope）
+
+1. **单 advisor 时 LLM hallucinate advisorId**：跑 1 位 advisor (`buffett`) 时 LLM 输出 `advisorId: "warren_buffett"` 不是请求的 `"buffett"`。多位时（如 3 位）正常对齐。原因可能是 prompt 没明确要求 id 与请求一致。Sprint 5 候选修复点。
+
+### 当前验证状态（命令可复现）
+
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+npm run lint    # 0 错
+npm run test    # 12 files / 57 tests 全绿
+npm run build   # 153.69 kB gzipped JS（+ 甄嬛 SKILL ~3KB）
+npm run smoke -- https://mastermind-gamma-weld.vercel.app  # 线上 E2E 全 PASS
+```
+
+### 剩余任务（更新优先级）
+
+🟡 **中优先级**
+- Sprint 5：军师质量回炉（5-10 场真实决策测试 → 调 vault；可与 advisorId hallucinate 修复并轨）
+
+🟢 **低优先级 / 清理**
+- `.env.example` 默认 `qwen3-max` → `qwen3.6-max-preview`
+- spec `qwen3-plus` / `qwen3-max` 引用更新
+- main 分支同步（`0d9c928 chore: ignore .worktrees directory` 未 push）
+- `feat/mastermind-v1` → main PR / 合并
+
+⚪ **Plan §风险点留白**
+- Round-robin 完全破除（V5 风格档位 hint）—— 用户接受现状
+- DashScope 配额 2026-07-20 到期监控
+
+---
+
+**Sprint 1（9 位军师）+ Sprint 4 三档全部封闭。
+本轮总 commits：`23c70e3` (甄嬛入仓)。完整今日 chain：`f85a3e9` → `c68c909` → `cd08709` → `0e6502a` → `84fc6c9` → `dca8e20` → `8f47e7c` → `93299d0` → `731765c` → `23c70e3`（共 10 commits）。**
