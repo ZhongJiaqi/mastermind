@@ -50,7 +50,7 @@ export default async function handler(req: Request): Promise<Response> {
           { role: 'user', content: prompt },
         ],
         stream: true,
-        temperature: 0.7,
+        temperature: 0.9,
       });
       for await (const chunk of stream as AsyncIterable<{
         choices: Array<{ delta: { content?: string } }>;
