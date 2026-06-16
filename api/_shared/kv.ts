@@ -92,6 +92,10 @@ export async function kvSetJson<T>(
   }
 }
 
+export async function kvDelete(key: string): Promise<void> {
+  await call(['DEL', key]);
+}
+
 export async function kvGetJson<T>(key: string): Promise<T | null> {
   const raw = await call<string | null>(['GET', key]);
   if (!raw) return null;

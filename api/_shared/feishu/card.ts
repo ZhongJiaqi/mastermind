@@ -35,7 +35,7 @@ function formatDecisionMarkdown(card: DecisionCard): string {
   const models = card.mentalModels?.length
     ? card.mentalModels.map((m) => escapeForLarkMd(m.name)).join(' / ')
     : '（未标）';
-  return `**📌 ${escapeForLarkMd(card.characterName)}** · ${stance}\n${reasoning}\n模型：${models}`;
+  return `**📌 ${escapeForLarkMd(card.characterName)}** · ${stance}\n${reasoning}\n思维模型：${models}`;
 }
 
 export interface BuildCouncilCardParams {
@@ -65,7 +65,7 @@ export function buildCouncilCard(p: BuildCouncilCardParams): object {
     : `<font color="grey">${p.discussionMessages.length} 段讨论</font>`;
 
   return {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'indigo',
       title: { tag: 'plain_text', content: title },
@@ -92,11 +92,145 @@ export function buildCouncilCard(p: BuildCouncilCardParams): object {
   };
 }
 
+// ----------------------- Per-question advisor selector -----------------------
+
+export interface AdvisorOption {
+  id: string;
+  name: string;
+  tagline: string;
+}
+
+export type SelectorAction = 'toggle' | 'all' | 'none' | 'start';
+
+// Dedup duplicate dispatches of the SAME card-click. Feishu sometimes
+// sends the same logical click twice (different event_id, same
+// messageId+operator+value). event_id alone isn't a stable key — only
+// the action identity is. Keep a sliding window; entries auto-evict
+// when read past their TTL.
+export class ActionDedup {
+  private seen = new Map<string, number>();
+  constructor(public readonly ttlMs: number = 5000) {}
+
+  // Returns true the FIRST time this key is seen within the TTL window.
+  // Subsequent calls within TTL return false. A key whose timestamp has
+  // aged past TTL is treated as new.
+  shouldProcess(key: string, now: number = Date.now()): boolean {
+    const last = this.seen.get(key);
+    if (last != null && now - last < this.ttlMs) return false;
+    this.seen.set(key, now);
+    // Best-effort cleanup so the map can't grow unbounded under heavy
+    // traffic. Run only when crossing a soft cap.
+    if (this.seen.size > 200) {
+      for (const [k, t] of this.seen) {
+        if (now - t > this.ttlMs * 2) this.seen.delete(k);
+      }
+    }
+    return true;
+  }
+}
+
+// Pure toggle math — extracted so tests can pin behavior without dragging
+// in the SDK / KV / network layers. Returns the new selection ordered by
+// the canonical advisor list so downstream consumers always see a stable
+// ordering even after many toggles.
+export function applySelectorAction(
+  currentSelectedIds: string[],
+  allIds: string[],
+  action: SelectorAction,
+  toggleId?: string,
+): string[] {
+  const selected = new Set(currentSelectedIds);
+  if (action === 'toggle' && toggleId) {
+    if (selected.has(toggleId)) selected.delete(toggleId);
+    else selected.add(toggleId);
+  } else if (action === 'all') {
+    allIds.forEach((id) => selected.add(id));
+  } else if (action === 'none') {
+    selected.clear();
+  }
+  return allIds.filter((id) => selected.has(id));
+}
+
+export interface BuildSelectorCardParams {
+  pendingId: string;
+  question: string;
+  allAdvisors: AdvisorOption[];
+  selectedIds: string[];
+}
+
+// Chunk an array into rows so cards don't have rows that wrap awkwardly
+// in mobile Feishu. 3 buttons per row keeps full names readable.
+function chunkRows<T>(arr: T[], perRow: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += perRow) out.push(arr.slice(i, i + perRow));
+  return out;
+}
+
+export function buildSelectorCard(p: BuildSelectorCardParams): object {
+  const selected = new Set(p.selectedIds);
+  const rows = chunkRows(p.allAdvisors, 3);
+
+  const actionRows = rows.map((row) => ({
+    tag: 'action',
+    actions: row.map((a) => ({
+      tag: 'button',
+      text: {
+        tag: 'plain_text',
+        content: `${selected.has(a.id) ? '✅' : '⬜'} ${a.name}`,
+      },
+      type: selected.has(a.id) ? 'primary' : 'default',
+      value: { action: 'toggle', id: a.id, pendingId: p.pendingId },
+    })),
+  }));
+
+  return {
+    config: { wide_screen_mode: true, update_multi: true },
+    header: {
+      template: 'turquoise',
+      title: { tag: 'plain_text', content: '决策圆桌 · 请选军师' },
+    },
+    elements: [
+      {
+        tag: 'markdown',
+        content: `📝 **问题** · ${escapeForLarkMd(truncate(p.question, 200))}\n\n请选择本次出席的军师（默认全部 ${p.allAdvisors.length} 位）：`,
+      },
+      ...actionRows,
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '全选' },
+            type: 'default',
+            value: { action: 'all', pendingId: p.pendingId },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '全清' },
+            type: 'default',
+            value: { action: 'none', pendingId: p.pendingId },
+          },
+          {
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: `🚀 开始讨论（已选 ${selected.size}/${p.allAdvisors.length}）`,
+            },
+            type: selected.size > 0 ? 'primary' : 'default',
+            value: { action: 'start', pendingId: p.pendingId },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 // Compact card for "正在思考……" before the real council finishes.
 // Sent immediately on receive so the user gets feedback within ~3s.
 export function buildPendingCard(question: string, advisorCount: number): object {
   return {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'wathet',
       title: { tag: 'plain_text', content: `决策圆桌 · 思考中` },
@@ -121,14 +255,23 @@ export interface BuildStreamingCardParams {
   messages: DiscussionMessage[];
   done: boolean;
   modelUsed?: string;
+  // After </discussion>, LLM spends 30-60s emitting <conclusions> JSON.
+  // partialCardCount is the number of advisor cards parsed-so-far from
+  // that section (counted by "advisorId" occurrences). Pass it through
+  // so the card shows real progress during the conclusions phase
+  // instead of freezing on the discussion-only count.
+  partialCardCount?: number;
 }
 
 const STREAM_MESSAGE_TRUNCATE = 600;
 
 export function buildStreamingCard(p: BuildStreamingCardParams): object {
+  const partial = p.partialCardCount ?? 0;
   const title = p.messages.length === 0
     ? '决策圆桌 · 思考中'
-    : `决策圆桌 · 讨论中（${p.messages.length} 段）`;
+    : partial > 0
+      ? `决策圆桌 · 汇总决策中（${partial}/${p.advisorCount}）`
+      : `决策圆桌 · 讨论中（${p.messages.length} 段）`;
 
   const elements: object[] = [
     {
@@ -154,10 +297,10 @@ export function buildStreamingCard(p: BuildStreamingCardParams): object {
       });
     }
     if (!p.done) {
-      elements.push({
-        tag: 'markdown',
-        content: '_…正在生成更多_',
-      });
+      const tail = partial > 0
+        ? `_…正在汇总决策（${partial}/${p.advisorCount} 已生成）_`
+        : '_…正在生成更多讨论_';
+      elements.push({ tag: 'markdown', content: tail });
     }
   }
 
@@ -169,7 +312,7 @@ export function buildStreamingCard(p: BuildStreamingCardParams): object {
   }
 
   return {
-    config: { wide_screen_mode: true },
+    config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'wathet',
       title: { tag: 'plain_text', content: title },
