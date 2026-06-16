@@ -1,0 +1,35 @@
+name: Feishu webhook warm-up
+
+# Vercel hobby plan caps crons at once-per-day, which won't keep the
+# api/feishu/webhook edge function instance warm between Feishu's event
+# requests. We poll the warmup endpoint every 5 minutes from GitHub
+# Actions instead — free, no frequency limits, and runs even when no
+# code change has happened.
+#
+# Why 5 min: Vercel edge function instances stay warm for ~5-10 min of
+# inactivity. 5-min polling guarantees we never let an instance go cold.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Warm up Feishu webhook
+        run: |
+          set -euo pipefail
+          URL="https://mastermind-gamma-weld.vercel.app/api/feishu/warmup"
+          # Three rapid pings — Vercel may load-balance across multiple
+          # edge instances; hitting 3x in quick succession warms most
+          # of them. Tolerate non-200 with || true so a transient
+          # outage doesn't fail the workflow forever.
+          for i in 1 2 3; do
+            code=$(curl -sS -o /tmp/body.$i -w "%{http_code}" --max-time 8 "$URL" || echo "000")
+            echo "[$i] $URL → $code"
+            cat /tmp/body.$i || true
+            echo
+          done
