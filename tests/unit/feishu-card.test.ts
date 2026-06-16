@@ -13,8 +13,21 @@ const sampleCard: DecisionCard = {
   ],
 };
 
+// Schema 2.0 cards put elements under body.elements (not at the top level
+// like 1.0). Tests walk through body.elements throughout.
+interface CardElement {
+  tag: string;
+  content?: string;
+  behaviors?: Array<{ type?: string; default_url?: string }>;
+}
+interface CardV2 {
+  schema: string;
+  header: { template: string; title: { content: string } };
+  body: { elements: CardElement[] };
+}
+
 describe('buildCouncilCard', () => {
-  it('produces an interactive card with header + decision cards + link button', () => {
+  it('produces a schema 2.0 card with header + decision cards + link button', () => {
     const card = buildCouncilCard({
       question: '我该不该全部仓位换比特币？',
       advisorNames: ['沃伦·巴菲特', '查理·芒格'],
@@ -22,23 +35,22 @@ describe('buildCouncilCard', () => {
       discussionMessages: [],
       shareUrl: 'https://example.com/?c=abcd1234',
       modelUsed: 'qwen3.6-max-preview',
-    }) as {
-      header: { template: string; title: { content: string } };
-      elements: Array<{ tag: string; content?: string; actions?: Array<{ url: string }> }>;
-    };
+    }) as CardV2;
 
+    expect(card.schema).toBe('2.0');
     expect(card.header.template).toBe('indigo');
     expect(card.header.title.content).toContain('决策圆桌');
     expect(card.header.title.content).toContain('全部仓位换比特币');
 
-    const decisionText = card.elements.find(
+    const decisionText = card.body.elements.find(
       (e) => e.tag === 'markdown' && e.content?.startsWith('**📌'),
     );
     expect(decisionText?.content).toContain('能力圈');
     expect(decisionText?.content).toContain('不换');
 
-    const action = card.elements.find((e) => e.tag === 'action');
-    expect(action?.actions?.[0]?.url).toBe('https://example.com/?c=abcd1234');
+    const linkButton = card.body.elements.find((e) => e.tag === 'button');
+    expect(linkButton?.behaviors?.[0]?.type).toBe('open_url');
+    expect(linkButton?.behaviors?.[0]?.default_url).toBe('https://example.com/?c=abcd1234');
   });
 
   it('truncates very long questions in the header', () => {
@@ -49,7 +61,7 @@ describe('buildCouncilCard', () => {
       cards: [],
       discussionMessages: [],
       shareUrl: 'https://example.com/?c=abc',
-    }) as { header: { title: { content: string } } };
+    }) as CardV2;
     expect(card.header.title.content.length).toBeLessThanOrEqual(80);
     expect(card.header.title.content.endsWith('…')).toBe(true);
   });
@@ -61,8 +73,8 @@ describe('buildCouncilCard', () => {
       cards: [],
       discussionMessages: [],
       shareUrl: 'https://example.com/?c=abc',
-    }) as { elements: Array<{ tag: string; content?: string }> };
-    const warning = card.elements.find((e) => e.content?.includes('解析失败'));
+    }) as CardV2;
+    const warning = card.body.elements.find((e) => e.content?.includes('解析失败'));
     expect(warning).toBeDefined();
   });
 
@@ -81,9 +93,9 @@ describe('buildCouncilCard', () => {
       ],
       discussionMessages: [] as DiscussionMessage[],
       shareUrl: 'https://example.com/?c=abc',
-    }) as { elements: Array<{ tag: string; content?: string }> };
+    }) as CardV2;
 
-    const joined = card.elements.map((e) => e.content || '').join('\n');
+    const joined = card.body.elements.map((e) => e.content || '').join('\n');
     expect(joined).not.toContain('<b>');
     expect(joined).not.toContain('`');
     expect(joined).not.toContain('<x>');
@@ -91,13 +103,11 @@ describe('buildCouncilCard', () => {
 });
 
 describe('buildPendingCard', () => {
-  it('produces a wathet-templated card with question + count', () => {
-    const card = buildPendingCard('该不该裸辞', 12) as {
-      header: { template: string; title: { content: string } };
-      elements: Array<{ tag: string; content?: string }>;
-    };
+  it('produces a schema 2.0 wathet-templated card with question + count', () => {
+    const card = buildPendingCard('该不该裸辞', 12) as CardV2;
+    expect(card.schema).toBe('2.0');
     expect(card.header.template).toBe('wathet');
-    expect(card.elements[0].content).toContain('该不该裸辞');
-    expect(card.elements[0].content).toContain('12 位');
+    expect(card.body.elements[0].content).toContain('该不该裸辞');
+    expect(card.body.elements[0].content).toContain('12 位');
   });
 });

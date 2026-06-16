@@ -34,6 +34,19 @@ interface ShareBlob {
   createdAt: number;
 }
 
+// Vercel Edge Middleware (middleware.ts at repo root) injects the share
+// blob into the served HTML when the URL has ?c=<shareId>, so by the
+// time React mounts the data is already in window.__INITIAL_SHARE__.
+// This eliminates the /api/share round-trip (~200-400ms saved) for the
+// most common share-view entry point. Falls back to /api/share if
+// missing (e.g. local dev without middleware, or KV unreachable on the
+// edge fetch).
+declare global {
+  interface Window {
+    __INITIAL_SHARE__?: ShareBlob;
+  }
+}
+
 export default function App() {
   return <MastermindEditor shareId={readShareIdFromUrl()} />;
 }
@@ -59,19 +72,24 @@ function MastermindEditor({ shareId }: { shareId: string | null }) {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`/api/share?id=${encodeURIComponent(shareId)}`);
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try {
-            const body = (await res.json()) as { error?: { message?: string } };
-            if (body.error?.message) msg = body.error.message;
-          } catch {
-            /* keep default */
+        // Fast path: middleware already injected the blob into HTML.
+        // Use it synchronously — no network round-trip needed.
+        let blob: ShareBlob | null = window.__INITIAL_SHARE__ ?? null;
+        if (!blob) {
+          const res = await fetch(`/api/share?id=${encodeURIComponent(shareId)}`);
+          if (!res.ok) {
+            let msg = `HTTP ${res.status}`;
+            try {
+              const body = (await res.json()) as { error?: { message?: string } };
+              if (body.error?.message) msg = body.error.message;
+            } catch {
+              /* keep default */
+            }
+            if (!cancelled) setLocalError(`无法加载分享：${msg}`);
+            return;
           }
-          if (!cancelled) setLocalError(`无法加载分享：${msg}`);
-          return;
+          blob = (await res.json()) as ShareBlob;
         }
-        const blob = (await res.json()) as ShareBlob;
         if (cancelled) return;
         const parsed = parseCouncilStream(blob.fullText);
         setQuestion(blob.question);

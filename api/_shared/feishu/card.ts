@@ -65,30 +65,30 @@ export function buildCouncilCard(p: BuildCouncilCardParams): object {
     : `<font color="grey">${p.discussionMessages.length} 段讨论</font>`;
 
   return {
+    schema: '2.0',
     config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'indigo',
       title: { tag: 'plain_text', content: title },
     },
-    elements: [
-      { tag: 'markdown', content: headerLine },
-      { tag: 'hr' },
-      { tag: 'markdown', content: '**⚖️ 决策建议**' },
-      ...decisionElements,
-      { tag: 'hr' },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '📖 在网页上看完整讨论' },
-            type: 'primary',
-            url: p.shareUrl,
-          },
-        ],
-      },
-      { tag: 'markdown', content: footerNote },
-    ],
+    body: {
+      direction: 'vertical',
+      elements: [
+        { tag: 'markdown', content: headerLine },
+        { tag: 'hr' },
+        { tag: 'markdown', content: '**⚖️ 决策建议**' },
+        ...decisionElements,
+        { tag: 'hr' },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '📖 在网页上看完整讨论' },
+          type: 'primary',
+          width: 'fill',
+          behaviors: [{ type: 'open_url', default_url: p.shareUrl }],
+        },
+        { tag: 'markdown', content: footerNote },
+      ],
+    },
   };
 }
 
@@ -166,63 +166,87 @@ function chunkRows<T>(arr: T[], perRow: number): T[][] {
   return out;
 }
 
+// Helper: checker form field name from advisor id (must be unique in card,
+// alpha/underscore start). We just prefix `adv_` so we can identify which
+// form_value entries are advisor checkers vs other form fields.
+export function advisorCheckerName(advisorId: string): string {
+  return `adv_${advisorId}`;
+}
+export function advisorIdFromCheckerName(name: string): string | null {
+  return name.startsWith('adv_') ? name.slice(4) : null;
+}
+
+// Card schema 2.0 selector — uses a `form` container with `checker`
+// components per advisor. Checking/unchecking happens entirely in the
+// Feishu mobile client (local state, ~0ms) — server only gets called
+// when the user clicks the submit button, which delivers all checker
+// states in form_value at once. Solves the ~1s toggle latency that the
+// 1.0 schema button-toggle approach hit (each click was a server
+// roundtrip).
 export function buildSelectorCard(p: BuildSelectorCardParams): object {
   const selected = new Set(p.selectedIds);
-  const rows = chunkRows(p.allAdvisors, 3);
+  const rows = chunkRows(p.allAdvisors, 2);
 
-  const actionRows = rows.map((row) => ({
-    tag: 'action',
-    actions: row.map((a) => ({
-      tag: 'button',
-      text: {
-        tag: 'plain_text',
-        content: `${selected.has(a.id) ? '✅' : '⬜'} ${a.name}`,
-      },
-      type: selected.has(a.id) ? 'primary' : 'default',
-      value: { action: 'toggle', id: a.id, pendingId: p.pendingId },
+  // 2 checkers per row via column_set. Wider columns make checker rows
+  // less cramped than 3-per-row buttons did.
+  const checkerColumns = rows.map((row) => ({
+    tag: 'column_set',
+    horizontal_spacing: 'medium',
+    columns: row.map((a) => ({
+      tag: 'column',
+      width: 'weighted',
+      weight: 1,
+      elements: [
+        {
+          tag: 'checker',
+          name: advisorCheckerName(a.id),
+          checked: selected.has(a.id),
+          text: { tag: 'plain_text', content: a.name },
+          overall_checkable: true,
+        },
+      ],
     })),
   }));
 
   return {
+    schema: '2.0',
     config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'turquoise',
       title: { tag: 'plain_text', content: '决策圆桌 · 请选军师' },
     },
-    elements: [
-      {
-        tag: 'markdown',
-        content: `📝 **问题** · ${escapeForLarkMd(truncate(p.question, 200))}\n\n请选择本次出席的军师（默认全部 ${p.allAdvisors.length} 位）：`,
-      },
-      ...actionRows,
-      { tag: 'hr' },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '全选' },
-            type: 'default',
-            value: { action: 'all', pendingId: p.pendingId },
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '全清' },
-            type: 'default',
-            value: { action: 'none', pendingId: p.pendingId },
-          },
-          {
-            tag: 'button',
-            text: {
-              tag: 'plain_text',
-              content: `🚀 开始讨论（已选 ${selected.size}/${p.allAdvisors.length}）`,
+    body: {
+      direction: 'vertical',
+      padding: '12px',
+      elements: [
+        {
+          tag: 'markdown',
+          content: `📝 **问题** · ${escapeForLarkMd(truncate(p.question, 200))}\n\n请勾选出席本次的军师（默认全部 ${p.allAdvisors.length} 位），点底部按钮开始：`,
+        },
+        {
+          tag: 'form',
+          name: 'selector_form',
+          elements: [
+            ...checkerColumns,
+            { tag: 'hr' },
+            {
+              tag: 'button',
+              name: 'submit_btn',
+              text: { tag: 'plain_text', content: '🚀 开始讨论' },
+              type: 'primary',
+              width: 'fill',
+              form_action_type: 'submit',
+              behaviors: [
+                {
+                  type: 'callback',
+                  value: { action: 'start_council', pendingId: p.pendingId },
+                },
+              ],
             },
-            type: selected.size > 0 ? 'primary' : 'default',
-            value: { action: 'start', pendingId: p.pendingId },
-          },
-        ],
-      },
-    ],
+          ],
+        },
+      ],
+    },
   };
 }
 
@@ -230,17 +254,21 @@ export function buildSelectorCard(p: BuildSelectorCardParams): object {
 // Sent immediately on receive so the user gets feedback within ~3s.
 export function buildPendingCard(question: string, advisorCount: number): object {
   return {
+    schema: '2.0',
     config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'wathet',
       title: { tag: 'plain_text', content: `决策圆桌 · 思考中` },
     },
-    elements: [
-      {
-        tag: 'markdown',
-        content: `📝 **问题** · ${escapeForLarkMd(truncate(question, 200))}\n🧠 **${advisorCount} 位军师正在召开圆桌**……\n通常 30-60 秒，请稍候。`,
-      },
-    ],
+    body: {
+      direction: 'vertical',
+      elements: [
+        {
+          tag: 'markdown',
+          content: `📝 **问题** · ${escapeForLarkMd(truncate(question, 200))}\n🧠 **${advisorCount} 位军师正在召开圆桌**……\n通常 30-60 秒，请稍候。`,
+        },
+      ],
+    },
   };
 }
 
@@ -312,11 +340,15 @@ export function buildStreamingCard(p: BuildStreamingCardParams): object {
   }
 
   return {
+    schema: '2.0',
     config: { wide_screen_mode: true, update_multi: true },
     header: {
       template: 'wathet',
       title: { tag: 'plain_text', content: title },
     },
-    elements,
+    body: {
+      direction: 'vertical',
+      elements,
+    },
   };
 }

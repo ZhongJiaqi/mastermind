@@ -35,6 +35,10 @@ jobs:
     timeout-minutes: 358  # 5h58min，留 2min 给 SIGTERM 优雅退出
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Worker 代码住在 feat/mastermind-v1，workflow 文件本身住在 main
+          # （GH Actions 的 cron + dispatch 只看 default branch 上的 workflow）。
+          ref: feat/mastermind-v1
 
       - uses: actions/setup-node@v4
         with:

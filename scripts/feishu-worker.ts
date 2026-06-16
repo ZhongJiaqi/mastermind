@@ -26,7 +26,7 @@ import { parseCouncilStream } from '../src/lib/councilParser';
 import { openCouncilStream } from '../api/_shared/council-run';
 import {
   ActionDedup,
-  applySelectorAction,
+  advisorIdFromCheckerName,
   buildCouncilCard,
   buildSelectorCard,
   buildStreamingCard,
@@ -58,6 +58,25 @@ interface PendingSelection {
   question: string;
   selectedIds: string[];
   createdAt: number;
+}
+
+// In-memory cache for pending selections. The toggle hot path reads/writes
+// memory only; KV writes are fire-and-forget. Worker restart loses the
+// cache but KV reads on click recover state (one slow click after restart
+// is acceptable trade-off for ~600ms → ~10ms toggle latency).
+const pendingCache = new Map<string, PendingSelection>();
+function cacheSetPending(id: string, value: PendingSelection, ttlSeconds: number): void {
+  pendingCache.set(id, value);
+  setTimeout(() => pendingCache.delete(id), ttlSeconds * 1000).unref?.();
+}
+
+// Wrap a card object in the format Feishu's WS card.action.trigger
+// response requires: { card: { type: 'raw', data: <card-json> } }.
+// Returning a bare card object causes Feishu to time out the WS click
+// ack and toast 「目标回调服务超时未响应」 even when REST patch refreshes
+// the visible card.
+function cardResponse(card: object): object {
+  return { card: { type: 'raw', data: card } };
 }
 
 function trim(v: string | undefined): string {
@@ -177,15 +196,20 @@ async function sendSelectorOnDm(openId: string, rawQuestion: string): Promise<vo
   }
 
   const pendingId = generateShareId(12);
+  const pendingValue: PendingSelection = {
+    openId,
+    question,
+    selectedIds: ALL_ADVISOR_IDS,
+    createdAt: Date.now(),
+  };
 
-  // Write KV FIRST so even the fastest possible click race finds state.
+  // Memory cache first (cheap), then KV (durable). Both happen before
+  // the card goes out so even the fastest click race finds state.
+  cacheSetPending(pendingId, pendingValue, PENDING_TTL_SECONDS);
   try {
-    await kvSetJson<PendingSelection>(
-      `pending:${pendingId}`,
-      { openId, question, selectedIds: ALL_ADVISOR_IDS, createdAt: Date.now() },
-      PENDING_TTL_SECONDS,
-    );
+    await kvSetJson<PendingSelection>(`pending:${pendingId}`, pendingValue, PENDING_TTL_SECONDS);
   } catch (err) {
+    pendingCache.delete(pendingId);
     console.error('[selector] KV write failed, falling back to all-10 council', err);
     await processCouncilDm(openId, question, ALL_ADVISOR_IDS);
     return;
@@ -417,110 +441,94 @@ const inflight = new Set<string>();
 
 // ----------------------- Card click handler -----------------------
 
-interface SelectorActionValue {
-  action?: 'toggle' | 'all' | 'none' | 'start';
-  id?: string;
+// With Card 2.0 form + checkers, checking/unchecking advisors happens
+// entirely client-side (zero server roundtrip). The ONLY server-side
+// action is when the user clicks the submit button — at which point
+// Feishu delivers form_value (a map of checker name → checked state)
+// alongside the button's payload.
+interface SubmitActionValue {
+  action?: 'start_council';
   pendingId?: string;
 }
 
-// For card click responses, Feishu requires the handler to RETURN the
-// new card object — WSClient passes the return value back through the
-// websocket as the click response, and Feishu uses that to refresh the
-// clicker's view synchronously. REST patchCard (im.v1.message.patch)
-// succeeds at the API but does NOT refresh a user who is actively
-// viewing the card. So: return the card primarily, and also patch via
-// REST as belt-and-suspenders for any other viewers / cached states.
-async function handleSelectorClick(payload: {
+async function handleFormSubmit(payload: {
   pendingId: string;
-  action: SelectorActionValue['action'];
-  toggleId?: string;
   cardMessageId: string;
   clickerOpenId: string;
+  formValue: Record<string, unknown>;
 }): Promise<object | undefined> {
-  const { pendingId, action, toggleId, cardMessageId, clickerOpenId } = payload;
-  let pending: PendingSelection | null = null;
-  try {
-    pending = await kvGetJson<PendingSelection>(`pending:${pendingId}`);
-  } catch (err) {
-    console.error('[selector] KV read failed', err);
+  const { pendingId, cardMessageId, clickerOpenId, formValue } = payload;
+
+  // Look up question + openId (originally stored when the card was sent).
+  let pending: PendingSelection | null = pendingCache.get(pendingId) ?? null;
+  if (!pending) {
+    try {
+      pending = await kvGetJson<PendingSelection>(`pending:${pendingId}`);
+    } catch (err) {
+      console.error('[selector] KV read failed', err);
+    }
   }
   if (!pending) {
-    console.warn(`[selector] no pending blob for ${pendingId} (expired or never written)`);
+    console.warn(`[selector] no pending blob for ${pendingId} (expired)`);
     const expiredCard = {
+      schema: '2.0',
       config: { wide_screen_mode: true, update_multi: true },
       header: { template: 'red', title: { tag: 'plain_text', content: '决策圆桌 · 选择已过期' } },
-      elements: [
-        {
-          tag: 'markdown',
-          content: '⚠️ 这张选军师卡片已过期（>1 小时）或被清除。请重新发送你的问题。',
-        },
-      ],
+      body: {
+        elements: [
+          {
+            tag: 'markdown',
+            content: '⚠️ 这张选军师卡片已过期（>1 小时）或被清除。请重新发送你的问题。',
+          },
+        ],
+      },
     };
-    patchCard(cardMessageId, expiredCard).catch((err) => console.warn('[selector] expired card patch failed', err));
-    return expiredCard;
+    patchCard(cardMessageId, expiredCard).catch(() => undefined);
+    return cardResponse(expiredCard);
   }
 
-  const newSelectedIds = applySelectorAction(
-    pending.selectedIds,
-    ALL_ADVISOR_IDS,
-    (action ?? 'toggle') as Parameters<typeof applySelectorAction>[2],
-    toggleId,
-  );
-
-  if (action === 'start') {
-    if (newSelectedIds.length === 0) {
-      console.log(`[selector] start clicked with 0 selected — refusing`);
-      const sameCard = buildSelectorCard({
-        pendingId,
-        question: pending.question,
-        allAdvisors: ADVISOR_OPTIONS,
-        selectedIds: newSelectedIds,
-      });
-      patchCard(cardMessageId, sameCard).catch(() => undefined);
-      return sameCard;
+  // Derive selected advisors from form_value (advisor checker names look
+  // like `adv_buffett`; the rest are non-advisor form fields we ignore).
+  const selectedIds: string[] = [];
+  for (const [name, checked] of Object.entries(formValue)) {
+    const advisorId = advisorIdFromCheckerName(name);
+    if (advisorId && checked === true && ALL_ADVISOR_IDS.includes(advisorId)) {
+      selectedIds.push(advisorId);
     }
-    console.log(`[selector] start clicked — running council with ${newSelectedIds.length} advisors`);
-    await kvDelete(`pending:${pendingId}`).catch(() => undefined);
-    // Kick off council asynchronously — it'll patch the card via REST as
-    // streaming proceeds. Return a "thinking" card NOW so feishu replaces
-    // the selector on the clicker's view immediately.
-    const thinkingCard = buildStreamingCard({
+  }
+  // Keep canonical advisor order for downstream council prompts.
+  const orderedSelected = ALL_ADVISOR_IDS.filter((id) => selectedIds.includes(id));
+
+  if (orderedSelected.length === 0) {
+    console.log('[selector] form submitted with 0 selected — re-prompting');
+    const reprompt = buildSelectorCard({
+      pendingId,
       question: pending.question,
-      advisorCount: newSelectedIds.length,
-      messages: [],
-      done: false,
+      allAdvisors: ADVISOR_OPTIONS,
+      selectedIds: [],
     });
-    void processCouncilDm(pending.openId, pending.question, newSelectedIds, cardMessageId).catch((err) => {
-      console.error('[selector] background council threw', err);
-    });
-    return thinkingCard;
+    patchCard(cardMessageId, reprompt).catch(() => undefined);
+    return cardResponse(reprompt);
   }
 
-  // toggle / all / none → persist + return new card (sync UI refresh)
-  // and ALSO patch via REST (covers external viewers + cache invalidation)
-  try {
-    await kvSetJson<PendingSelection>(
-      `pending:${pendingId}`,
-      { ...pending, selectedIds: newSelectedIds },
-      PENDING_TTL_SECONDS,
-    );
-  } catch (err) {
-    console.error('[selector] KV update failed', err);
-  }
-  const newCard = buildSelectorCard({
-    pendingId,
-    question: pending.question,
-    allAdvisors: ADVISOR_OPTIONS,
-    selectedIds: newSelectedIds,
-  });
-  // No REST patchCard fallback here — return-card via WS response is the
-  // canonical Feishu path and refreshes the clicker's view synchronously.
-  // The earlier REST patch was redundant and added ~300ms of perceived
-  // latency on every toggle.
   console.log(
-    `[selector] action=${action}${toggleId ? ` id=${toggleId}` : ''} → ${newSelectedIds.length}/${ADVISOR_OPTIONS.length} (clicker=${clickerOpenId.slice(-6)}) ✅ returning new card`,
+    `[selector] form submitted by ${clickerOpenId.slice(-6)} → ${orderedSelected.length} advisors: ${orderedSelected.join(',')}`,
   );
-  return newCard;
+  pendingCache.delete(pendingId);
+  void kvDelete(`pending:${pendingId}`).catch(() => undefined);
+
+  // Kick off council in the background; immediately return a thinking
+  // card so Feishu replaces the selector on the clicker's view fast.
+  const thinkingCard = buildStreamingCard({
+    question: pending.question,
+    advisorCount: orderedSelected.length,
+    messages: [],
+    done: false,
+  });
+  void processCouncilDm(pending.openId, pending.question, orderedSelected, cardMessageId).catch((err) => {
+    console.error('[selector] background council threw', err);
+  });
+  return cardResponse(thinkingCard);
 }
 
 wsClient.start({
@@ -580,24 +588,28 @@ wsClient.start({
   }),
 });
 
-// Dedup duplicate card clicks. Feishu sometimes pushes the same logical
+// Dedup duplicate submit clicks. Feishu sometimes pushes the same logical
 // click twice with DIFFERENT event_ids — so event_id-based dedup misses
-// them. Identity is (cardMessageId, operator, action.value-serialized);
-// two unique button presses always differ on action.value (toggle id,
-// or action='all'/'none'/'start'), so this never blocks legit clicks.
-// 5s window is long enough to catch network retries, short enough that
-// a deliberate re-toggle later still works.
+// them. Identity is (cardMessageId, operator, action.value-serialized).
+// 5s window is long enough to catch SDK double-dispatch, short enough
+// that an intentional re-submit later still works.
 const clickDedup = new ActionDedup(5000);
 
 async function cardClickHandler(data: unknown): Promise<object | undefined> {
   const d = data as {
     event_id?: string;
-    action?: { value?: SelectorActionValue };
+    action?: {
+      value?: SubmitActionValue;
+      form_value?: Record<string, unknown>;
+      name?: string;
+      tag?: string;
+    };
     operator?: { open_id?: string };
     context?: { open_message_id?: string };
   };
 
   const value = d.action?.value;
+  const formValue = d.action?.form_value ?? {};
   const cardMessageId = d.context?.open_message_id;
   const clickerOpenId = d.operator?.open_id;
   if (!value?.action || !value.pendingId || !cardMessageId || !clickerOpenId) {
@@ -608,21 +620,25 @@ async function cardClickHandler(data: unknown): Promise<object | undefined> {
   const actionKey = `${cardMessageId}:${clickerOpenId}:${JSON.stringify(value)}`;
   if (!clickDedup.shouldProcess(actionKey)) {
     console.log(
-      `[feishu-worker] dedupe duplicate click action=${value.action} id=${value.id ?? ''} event_id=${d.event_id ?? '?'}`,
+      `[feishu-worker] dedupe duplicate submit action=${value.action} event_id=${d.event_id ?? '?'}`,
     );
     return undefined;
   }
 
+  if (value.action !== 'start_council') {
+    console.warn(`[feishu-worker] unrecognized action=${value.action} (only start_council supported in form mode)`);
+    return undefined;
+  }
+
   try {
-    return await handleSelectorClick({
+    return await handleFormSubmit({
       pendingId: value.pendingId,
-      action: value.action,
-      toggleId: value.id,
       cardMessageId,
       clickerOpenId,
+      formValue,
     });
   } catch (err) {
-    console.error('[feishu-worker] selector click handler threw', err);
+    console.error('[feishu-worker] form submit handler threw', err);
     return undefined;
   }
 }
