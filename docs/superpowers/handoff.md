@@ -1247,3 +1247,66 @@ main HEAD: 4b38900 Merge pull request #9
 ---
 
 **全部收尾完成。** README 干净对外、main 同步、handoff 完整记录、memory 已加 mastermind 条目。可以放心清空会话开新会话。
+
+---
+
+## 2026-06-16 · LLM Fallback Chain 自愈兜底（slim 版，无 DB）
+
+### 背景
+
+- `qwen3.6-max-preview` 100 万 token 免费额度 **2026-07-20 到期**，离今天 34 天
+- 到期后线上会挂（账户开"仅免费额度"保护时返 403；或者切按量付费要主动操作）
+- 参考 ai-news-radar 项目的 LLM 自愈链（`lib/llm/index.ts` + `discovery.ts` + Supabase `llm_model_health` 表）
+
+### 落地：slim 版
+
+不引入 Supabase，纯进程内 + env 链。ai-news-radar 的 6 个零件搬过来 4 个：
+
+| 零件 | 状态 |
+|---|---|
+| `LLM_MODEL_CHAIN` env 链 | ✅ |
+| quota 错（429/403+FreeTier）自动 fallback 下一个 | ✅ |
+| AbortController per-call timeout（60s council / 30s intake） | ✅ |
+| 5xx 指数退避 retry × 3 | ✅ |
+| Supabase `llm_model_health` 跨进程持久化 | ❌ slim 版用 in-memory `Map<modelId, untilTs>` |
+| 自动 discover + probe sweep 新模型 | ❌ mastermind 模型清单是手挑的，env 链够用 |
+
+### 关键决策
+
+1. **流式安全**：tryWithChain 只在 `factory()` resolve 之前持有 AbortController；resolve 后立即 clearTimeout，stream 消费阶段不会被打断
+2. **quota 错不消耗 retry 预算**：interactive 场景，429/quota-403 直接 fall through 到下一个模型；只对 5xx 做指数退避 retry × 3
+3. **进程内缓存到次日 UTC 0 点**：DashScope 免费额度按日重置；同 instance 后续调用直接跳过已耗尽模型
+4. **流式 + chain 切换边界**：stream 开启前的 quota 错 = 切下一个（用户无感）；stream 开启后挂 = 写 SSE error 事件（不能"重发"）
+
+### 改动文件
+
+- ✅ 新建 `api/_shared/llm-chain.ts` (~200 LOC)
+- ✅ 重构 `api/council.ts` — SSE 包 tryWithChain，加 `meta: { modelUsed }` 事件
+- ✅ 重构 `api/intake-clarify.ts` — 非流式包 tryWithChain
+- ✅ 新增 `tests/unit/llm-chain.test.ts` — 20 个单测（resolveChain / 错误分类 / 缓存 / quota fallback / timeout fallthrough / 5xx retry / 非 quota 错冒泡 / 链尾耗尽报 LLM_CHAIN_EXHAUSTED）
+- ✅ `.env.example` 加 `LLM_MODEL_CHAIN="deepseek-v4-pro"` + 说明段
+
+### 验证
+
+```
+npm run lint    # ✅ 0 错
+npm run test    # ✅ 77 tests passed（原 57 + chain 新增 20）
+```
+
+未验证：
+- ⚠️  本地未跑真实 DashScope 调用——只 mock 了 OpenAI client。生产侧 `meta: { modelUsed }` 事件 UI 暂未消费（前端 SSE handler 忽略未知 event 即可）
+- ⚠️  未做 E2E smoke——下次 push 前建议 `npm run smoke -- https://mastermind-gamma-weld.vercel.app` 实测
+
+### 7-20 之前要做的事
+
+- [ ] 进百炼控制台看 `qwen3.6-max-preview` 剩余 token
+- [ ] 给 Vercel 加 `LLM_MODEL_CHAIN="deepseek-v4-pro"` env var（不加也行，代码硬编码 default 是 qwen3.6-max-preview 但没备选；env 加了才真有兜底）
+- [ ] 7-20 当天主动手动跑一次 council，确认确实切到 deepseek-v4-pro 且体感可接受（deepseek 比 qwen 慢 ~3-5x）
+- [ ] 同时盯 deepseek-v4-pro 的 7-24 到期，再补一个新模型入链
+
+### 给下次会话的提示
+
+- 链是 env-driven，**改链只需改 Vercel env 不需要重新 deploy**——env 变更触发自动 redeploy
+- 进程内 exhausted cache 是 module-scope Map：Vercel function instance 重建（冷启 / 部署）后清空，第一次还会踩一次 429 才知道 qwen3.6-max 挂了——成本可接受
+- 想升 full 版（Supabase 持久化 + auto-discovery）：照搬 ai-news-radar `supabase/migrations/006_llm_model_health.sql` + `lib/llm/discovery.ts`，多 ~1-2 天
+
