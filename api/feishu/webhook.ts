@@ -11,23 +11,15 @@
 //      KV → send result card with "看完整讨论" link button.
 //   5. Anything else (bot messages, group, non-text) → just 200 {}.
 //
-// Idempotency: Feishu will retry up to 3 times if we don't ack in 3s.
-// We're racing on that — waitUntil + ack as the FIRST act, before any
-// non-trivial work, is what keeps the retry path cold.
+// Cold-start budget: Feishu enforces a 3s ack timeout, and edge cold
+// start time is ~proportional to imported module surface area. So
+// EVERYTHING heavy (OpenAI SDK, ADVISORS vault, parser, KV client,
+// feishu send) is dynamic-imported inside processCouncilDm — they get
+// loaded after we've already ack'd. The hot path here only needs the
+// Web Crypto AES helper (~zero overhead).
 // ======================================================
 
-import { ADVISORS } from '../../src/generated/advisors';
-import { parseCouncilStream } from '../../src/lib/councilParser';
 import { decryptFeishuEvent } from '../_shared/feishu/crypto';
-import { sendInteractiveCard, sendText } from '../_shared/feishu/send';
-import { buildCouncilCard } from '../_shared/feishu/card';
-import { runCouncilOnce } from '../_shared/council-run';
-import {
-  generateShareId,
-  isKvConfigured,
-  kvSetJson,
-  KvError,
-} from '../_shared/kv';
 
 export const config = { runtime: 'edge' };
 
@@ -104,17 +96,39 @@ async function processCouncilDm(senderOpenId: string, rawQuestion: string): Prom
   const question = stripBotMention(rawQuestion);
   if (!question) return;
 
+  // Heavy modules — loaded AFTER ack so they never contribute to the 3s
+  // cold-start budget that Feishu measures.
+  const [
+    advisorsMod,
+    parserMod,
+    runnerMod,
+    sendMod,
+    cardMod,
+    kvMod,
+  ] = await Promise.all([
+    import('../../src/generated/advisors'),
+    import('../../src/lib/councilParser'),
+    import('../_shared/council-run'),
+    import('../_shared/feishu/send'),
+    import('../_shared/feishu/card'),
+    import('../_shared/kv'),
+  ]);
+  const { ADVISORS } = advisorsMod;
+  const { parseCouncilStream } = parserMod;
+  const { runCouncilOnce } = runnerMod;
+  const { sendInteractiveCard, sendText } = sendMod;
+  const { buildCouncilCard } = cardMod;
+  const { generateShareId, isKvConfigured, kvSetJson, KvError } = kvMod;
+
   const advisorIds = ADVISORS.map((a) => a.frontmatter.id);
   const advisorNames = ADVISORS.map((a) => a.frontmatter.name);
 
   try {
-    // Quick ack so the user sees the bot received the message within ~1s.
     await sendText(
       senderOpenId,
       `📝 收到：${question}\n🧠 ${ADVISORS.length} 位军师召集中，约 30-60 秒……`,
     );
   } catch (err) {
-    // Even if the ack fails (rare — network blip), still attempt the council.
     console.error('[feishu] pending-ack send failed', err);
   }
 
@@ -139,7 +153,6 @@ async function processCouncilDm(senderOpenId: string, rawQuestion: string): Prom
 
   const parsed = parseCouncilStream(fullText);
 
-  // KV-backed share — degrade gracefully if not configured: send card with no button.
   let shareUrl = '';
   if (isKvConfigured()) {
     try {
@@ -175,7 +188,6 @@ async function processCouncilDm(senderOpenId: string, rawQuestion: string): Prom
   const send = await sendInteractiveCard(senderOpenId, card);
   if (!send.ok) {
     console.error('[feishu] result card send failed', send.status, send.body.slice(0, 300));
-    // Last-resort plain text fallback so the user sees *something*.
     await sendText(
       senderOpenId,
       `⚠️ 卡片发送失败（${send.status}）。给你纯文本版结论：\n\n${(parsed.cards ?? [])

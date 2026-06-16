@@ -67,9 +67,11 @@ describe('kvSetJson / kvGetJson', () => {
     vi.stubGlobal('fetch', fetchMock);
     await kvSetJson('foo', { x: 1 }, 60);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body as string)).toEqual(['SET', 'foo', '{"x":1}', 'EX', 60]);
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tkn');
+    const call = fetchMock.mock.calls[0] as unknown as [unknown, RequestInit | undefined];
+    const init = call[1];
+    expect(init).toBeDefined();
+    expect(JSON.parse(init!.body as string)).toEqual(['SET', 'foo', '{"x":1}', 'EX', 60]);
+    expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer tkn');
   });
 
   it('GET parses JSON-stored value', async () => {
