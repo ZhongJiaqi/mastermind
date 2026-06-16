@@ -3,8 +3,18 @@ import { createDashScope, getDashScopeModels } from './_shared/dashscope';
 import { errorResponse, normalizeError } from './_shared/errors';
 import { intakeClarifyRequestSchema } from './_shared/schemas';
 import { buildIntakePrompt } from './_shared/prompts/intake';
+import { tryWithChain } from './_shared/llm-chain';
 
 export const config = { runtime: 'edge' };
+
+// intake-clarify is a short JSON-only call. 30s is plenty after we strip
+// Qwen reasoning; tryWithChain falls through to the next model if a
+// quota error fires or the call abort-fires at the timeout.
+const INTAKE_TIMEOUT_MS = 30_000;
+
+interface ChatCompletion {
+  choices: Array<{ message?: { content?: string | null } }>;
+}
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
@@ -35,18 +45,24 @@ export default async function handler(req: Request): Promise<Response> {
 
     const models = getDashScopeModels();
     const client = createDashScope();
-    // DashScope-specific 顶层参数 enable_thinking: false（关闭 Qwen3.x reasoning，
-    // 省时间和 token）。OpenAI SDK 类型不识别，故 cast 整个调用。
-    const completion = (await (
-      client.chat.completions.create as (params: unknown) => Promise<{
-        choices: Array<{ message?: { content?: string | null } }>;
-      }>
-    )({
-      model: models.host,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      enable_thinking: false,
-    }));
+
+    const { result: completion } = await tryWithChain<ChatCompletion>(
+      { taskName: 'intake', timeoutMs: INTAKE_TIMEOUT_MS },
+      models.host,
+      async (model, signal) => {
+        // DashScope-specific enable_thinking: false (see council.ts comment).
+        // SDK types don't surface it; pass through via params cast.
+        const params = {
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+          enable_thinking: false,
+        } as Parameters<typeof client.chat.completions.create>[0];
+
+        return (await client.chat.completions.create(params, { signal })) as unknown as ChatCompletion;
+      },
+    );
+
     const content = completion.choices[0]?.message?.content ?? '';
     let parsedResult: unknown;
     try {
