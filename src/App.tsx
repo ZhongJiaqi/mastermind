@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ADVISORS } from './generated/advisors';
 import { SCENARIOS } from './constants';
 import { motion, AnimatePresence } from 'motion/react';
@@ -12,12 +12,11 @@ import {
 import { useMeeting } from './hooks/useMeeting';
 import { ErrorBanner } from './components/ErrorBanner';
 import { Discussion, Results } from './components/CouncilOutput';
-import { ShareView } from './components/ShareView';
+import { parseCouncilStream } from './lib/councilParser';
 
-// /?c=<shareId> short-circuits the editor: render a read-only view of
-// a previously stored council (currently written by the Feishu webhook
-// flow). Strictly base62, 4-32 chars — anything else falls through to
-// the normal editor.
+// /?c=<shareId> seeds the editor with a previously stored council
+// (currently written by the Feishu worker). Strictly base62, 4-32
+// chars — anything else is ignored and we render the empty editor.
 function readShareIdFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
@@ -26,14 +25,21 @@ function readShareIdFromUrl(): string | null {
   return /^[A-Za-z0-9]{4,32}$/.test(c) ? c : null;
 }
 
-export default function App() {
-  const shareId = readShareIdFromUrl();
-  if (shareId) return <ShareView shareId={shareId} />;
-  return <MastermindEditor />;
+interface ShareBlob {
+  question: string;
+  selectedAdvisorIds: string[];
+  fullText: string;
+  modelUsed?: string;
+  source?: string;
+  createdAt: number;
 }
 
-function MastermindEditor() {
-  const { state, start, reset } = useMeeting();
+export default function App() {
+  return <MastermindEditor shareId={readShareIdFromUrl()} />;
+}
+
+function MastermindEditor({ shareId }: { shareId: string | null }) {
+  const { state, start, reset, dispatch } = useMeeting();
   const session = state.session;
   const messages = session.messages;
   const cards = session.analysis.cards;
@@ -41,6 +47,60 @@ function MastermindEditor() {
   const [question, setQuestion] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
+  const seededShareIdRef = useRef<string | null>(null);
+
+  // Seed the editor from a /?c=<shareId> blob — the council content
+  // ends up in the same state slots as a live run, so the share view
+  // looks pixel-identical to a normal completed session in the editor.
+  useEffect(() => {
+    if (!shareId || seededShareIdRef.current === shareId) return;
+    seededShareIdRef.current = shareId;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/share?id=${encodeURIComponent(shareId)}`);
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try {
+            const body = (await res.json()) as { error?: { message?: string } };
+            if (body.error?.message) msg = body.error.message;
+          } catch {
+            /* keep default */
+          }
+          if (!cancelled) setLocalError(`无法加载分享：${msg}`);
+          return;
+        }
+        const blob = (await res.json()) as ShareBlob;
+        if (cancelled) return;
+        const parsed = parseCouncilStream(blob.fullText);
+        setQuestion(blob.question);
+        setSelectedIds(blob.selectedAdvisorIds);
+        // Replay the same dispatch sequence a live run would have
+        // produced so useMeeting's state lands on meeting-done with
+        // the messages + cards already populated.
+        dispatch({
+          type: 'INIT_SESSION',
+          input: { question: blob.question },
+          selectedAdvisorIds: blob.selectedAdvisorIds,
+        });
+        dispatch({ type: 'MEETING_STARTED' });
+        dispatch({ type: 'DISCUSSION_UPDATE', messages: parsed.messages });
+        if (parsed.cards) dispatch({ type: 'CONCLUSIONS_UPDATE', cards: parsed.cards });
+        dispatch({ type: 'MEETING_DONE' });
+      } catch (err) {
+        if (!cancelled) {
+          setLocalError(
+            `无法加载分享：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shareId, dispatch]);
 
   const isRunning = session.state.kind === 'meeting-running';
   const hasContent = messages.length > 0 || cards.length > 0;

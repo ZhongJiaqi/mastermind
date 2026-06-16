@@ -109,3 +109,71 @@ export function buildPendingCard(question: string, advisorCount: number): object
     ],
   };
 }
+
+// Streaming intermediate card — sent once, then patched every ~2s as
+// the LLM stream accumulates. Renders whatever discussion lines the
+// parser has resolved so far so the user sees the council "type" out
+// in real time. The final card (after stream ends) is built via
+// buildCouncilCard for the decisions + share button layout.
+export interface BuildStreamingCardParams {
+  question: string;
+  advisorCount: number;
+  messages: DiscussionMessage[];
+  done: boolean;
+  modelUsed?: string;
+}
+
+const STREAM_MESSAGE_TRUNCATE = 600;
+
+export function buildStreamingCard(p: BuildStreamingCardParams): object {
+  const title = p.messages.length === 0
+    ? '决策圆桌 · 思考中'
+    : `决策圆桌 · 讨论中（${p.messages.length} 段）`;
+
+  const elements: object[] = [
+    {
+      tag: 'markdown',
+      content: `📝 **问题** · ${escapeForLarkMd(truncate(p.question, 200))}`,
+    },
+  ];
+
+  if (p.messages.length === 0) {
+    elements.push({
+      tag: 'markdown',
+      content: `🧠 **${p.advisorCount} 位军师正在召集**……\n_首段发言通常在 5-10 秒内出现_`,
+    });
+  } else {
+    elements.push({ tag: 'hr' });
+    // One markdown element per message — keeps Feishu's per-element
+    // size limits comfortable and lets long discussions stay readable.
+    for (const m of p.messages) {
+      const text = escapeForLarkMd(truncate(m.text, STREAM_MESSAGE_TRUNCATE));
+      elements.push({
+        tag: 'markdown',
+        content: `**${escapeForLarkMd(m.advisorName)}**\n${text}`,
+      });
+    }
+    if (!p.done) {
+      elements.push({
+        tag: 'markdown',
+        content: '_…正在生成更多_',
+      });
+    }
+  }
+
+  if (p.modelUsed) {
+    elements.push({
+      tag: 'markdown',
+      content: `<font color="grey">本场模型: ${escapeForLarkMd(p.modelUsed)}</font>`,
+    });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'wathet',
+      title: { tag: 'plain_text', content: title },
+    },
+    elements,
+  };
+}
