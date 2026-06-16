@@ -7,6 +7,8 @@
     "gen:advisors": "tsx scripts/gen-advisors.ts",
     "predev": "npm run gen:advisors",
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "prestart": "npm run gen:advisors",
+    "start": "tsx scripts/feishu-worker.ts",
     "prebuild": "npm run gen:advisors",
     "build": "vite build",
     "preview": "vite preview",
