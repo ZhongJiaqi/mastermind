@@ -4,7 +4,10 @@ import { councilRequestSchema } from './_shared/schemas';
 import { createStreamedResponse } from './_shared/sse';
 import { openCouncilStream } from './_shared/council-run';
 
-export const config = { runtime: 'edge' };
+// hkg1（香港）距 DashScope（阿里云中国）只有 ~50ms RTT。默认让 Vercel 全球
+// 路由的话，美国 / 欧洲 user 的请求会从 sfo1/cdg1 等 POP 调中国 API，跨洋
+// RTT × 流式响应几十秒 = 必撞 edge function 30s 硬墙超时。
+export const config = { runtime: 'edge', regions: ['hkg1'] };
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'POST only', 405);
