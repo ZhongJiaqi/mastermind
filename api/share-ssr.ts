@@ -1,26 +1,18 @@
-// ⚠️ DEPRECATED 2026-06-17 — DO NOT EDIT.
+// Edge SSR endpoint that fetches the share blob from KV and injects it into
+// the static index.html before serving. Routed by vercel.json rewrites: only
+// GET /?c=<shareId> hits this; bare / and /api/* and /assets/* are untouched.
 //
-// This file does NOT run in production. Vercel's Routing Middleware
-// auto-detection skips root middleware.ts under the Vite builder
-// (`@vercel/static-build`), even though Vercel's docs claim "any framework"
-// support. Verified by inspecting deploy events: the string "middleware"
-// appears zero times in build logs across c3xmuho0g / jtdypmxbm / j3fxtxm9i.
-//
-// The working SSR-injection logic now lives in `api/share-ssr.ts`, which
-// gets auto-detected via the api/* convention. `vercel.json` rewrites
-// `/?c=<id>` → `/api/share-ssr` so the user-facing behavior is identical.
-//
-// This file is kept for historical reference + as a warning to future
-// Claude not to try to "fix" middleware.ts again under Vite. If you ever
-// migrate to a framework that supports Routing Middleware natively
-// (Next.js / SvelteKit / Astro), you can resurrect this — until then,
-// edit api/share-ssr.ts instead.
-
-import { next } from '@vercel/edge';
+// Why this exists instead of middleware.ts: Vercel's Routing Middleware
+// auto-detection does not pick up root middleware.ts under the Vite builder
+// (verified 2026-06-17: deploys consistently skip middleware.ts even though
+// the docs say "any framework"). The api/* directory is auto-detected though,
+// so an edge function here behaves identically to a middleware but actually
+// gets built. See HANDOFF entry "Plan A — share view SSR via api function".
 
 export const config = {
-  // Only run on the root path. Asset / API routes are unaffected.
-  matcher: '/',
+  runtime: 'edge',
+  // Pin to hkg1 so the KV read + DashScope responses don't cross the Pacific.
+  regions: ['hkg1'],
 };
 
 interface SharedCouncil {
@@ -34,42 +26,39 @@ interface SharedCouncil {
 
 const SHARE_ID_RE = /^[A-Za-z0-9]{4,32}$/;
 
-export default async function middleware(req: Request): Promise<Response> {
+export default async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const shareId = (url.searchParams.get('c') ?? '').trim();
 
-  // No share id → pass through to the static index.html as usual.
+  // No / invalid share id → bounce to bare / so the SPA loads normally.
   if (!shareId || !SHARE_ID_RE.test(shareId)) {
-    return next();
+    return Response.redirect(url.origin + '/', 302);
   }
 
-  // Fetch the static index.html via the standard pipeline so future Vite
-  // changes (asset hash bumps, meta tag tweaks) flow through automatically.
-  const upstream = await next();
-  const contentType = upstream.headers.get('content-type') ?? '';
-  if (!contentType.includes('text/html')) {
-    // Not an HTML response — give up and pass through unchanged.
-    return upstream;
+  // Fetch the static index.html shipped by vite build. It lives at
+  // /index.html in the same deployment.
+  const indexRes = await fetch(`${url.origin}/index.html`);
+  if (!indexRes.ok) {
+    // Static asset missing → degrade gracefully with a redirect to /.
+    return Response.redirect(url.origin + '/', 302);
   }
+  const html = await indexRes.text();
 
   const kvUrl = process.env.KV_REST_API_URL;
   const kvToken = process.env.KV_REST_API_TOKEN;
-  const html = await upstream.text();
 
-  // KV not configured → just return the HTML untouched; the client
-  // will see the empty share and render its "could not load" state.
+  // KV not configured → return the untouched HTML; the React client will
+  // see the empty share and render its "could not load" state.
   if (!kvUrl || !kvToken) {
-    return new Response(html, {
-      status: upstream.status,
-      headers: passthroughHtmlHeaders(upstream.headers),
-    });
+    return htmlResponse(html);
   }
 
   let blob: SharedCouncil | null = null;
   try {
     const kvRes = await fetch(`${kvUrl}/get/share:${shareId}`, {
       headers: { Authorization: `Bearer ${kvToken}` },
-      // Don't wait forever — if KV is slow, fall back to client-side fetch.
+      // Don't wait forever — if KV is slow, fall back to client-side fetch
+      // so the user still gets the page eventually.
       signal: AbortSignal.timeout(800),
     });
     if (kvRes.ok) {
@@ -79,34 +68,38 @@ export default async function middleware(req: Request): Promise<Response> {
       }
     }
   } catch {
-    // Swallow — the client will retry via /api/share, no regression.
+    // Swallow — client retries via /api/share if window.__INITIAL_SHARE__
+    // is absent. No regression vs the pre-SSR behavior.
   }
 
   if (!blob) {
-    return new Response(html, {
-      status: upstream.status,
-      headers: passthroughHtmlHeaders(upstream.headers),
-    });
+    return htmlResponse(html);
   }
 
-  // Inject right before </head> so it runs before main.tsx mounts.
-  // Escape </script> sequences in the JSON to avoid breaking out of
-  // the script tag if the council text contains literal "</script>".
+  // Escape </script> sequences in the JSON so council text containing
+  // literal "</script>" can't break out of the script tag.
   const safeJson = JSON.stringify(blob).replace(/</g, '\\u003c');
   const dataScript = `<script>window.__INITIAL_SHARE__=${safeJson};</script>`;
-  // Server-side render the discussion + decision content as plain HTML
-  // INSIDE <div id="root">. This way the user sees the actual data the
-  // instant the HTML lands (~250ms), instead of staring at a blank page
-  // for ~700ms-1s while the 161 KB JS bundle downloads. When React
-  // finally mounts, it replaces the SSR content with the React-rendered
-  // version — visually the same content, so flash is minimal.
+  // Server-side render the discussion + decision content as plain HTML INSIDE
+  // <div id="root">. User sees real data the instant HTML lands (~250ms)
+  // instead of waiting ~700ms-1s for the JS bundle to download + hydrate.
+  // When React mounts it replaces this SSR content with the React-rendered
+  // version — same content, so visual flash is minimal.
   const ssrHtml = renderShareSsr(blob);
   let injected = html.replace('</head>', `${dataScript}</head>`);
   injected = injected.replace('<div id="root"></div>', `<div id="root">${ssrHtml}</div>`);
 
-  return new Response(injected, {
-    status: upstream.status,
-    headers: passthroughHtmlHeaders(upstream.headers),
+  return htmlResponse(injected);
+}
+
+function htmlResponse(body: string): Response {
+  return new Response(body, {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      // Each ?c=<id> response is a single immutable share — let browsers
+      // and Vercel edge cache aggressively.
+      'cache-control': 'public, max-age=300, s-maxage=300',
+    },
   });
 }
 
@@ -136,8 +129,6 @@ function extractMessages(fullText: string): ParsedMessage[] {
   const m = fullText.match(/<discussion>([\s\S]*?)<\/discussion>/);
   if (!m) return [];
   const block = m[1];
-  // Look for `<speaker>: <text>` lines (the council prompt uses 「name：text」
-  // and sometimes ASCII colon). Split on any blank line.
   const lines = block.split(/\n\s*\n/);
   const out: ParsedMessage[] = [];
   for (const line of lines) {
@@ -213,9 +204,6 @@ function renderShareSsr(blob: SharedCouncil): string {
         .join('')
     : '';
 
-  // Inline neutral styles + the same stone-50 / stone-200 vibe as the
-  // React editor. Once React mounts it'll replace this; the content
-  // stays identical so visual flash is minimal.
   return `
     <div data-ssr-share="${escapeHtml(blob.createdAt.toString())}" style="max-width:42rem;margin:0 auto;padding:1.5rem;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;color:#292524">
       <h1 style="font-size:1.5rem;font-weight:700;margin:0 0 1.5rem;line-height:1.4">${escapeHtml(blob.question)}</h1>
@@ -231,18 +219,4 @@ function renderShareSsr(blob: SharedCouncil): string {
           : ''
       }
     </div>`;
-}
-
-function passthroughHtmlHeaders(src: Headers): Headers {
-  const out = new Headers();
-  src.forEach((value, key) => {
-    // Drop content-length since we mutated the body length.
-    if (key.toLowerCase() === 'content-length') return;
-    out.set(key, value);
-  });
-  out.set('content-type', 'text/html; charset=utf-8');
-  // Each ?c=<id> response is bound to a single immutable share; let
-  // browsers and Vercel edge cache aggressively.
-  out.set('cache-control', 'public, max-age=300, s-maxage=300');
-  return out;
 }
