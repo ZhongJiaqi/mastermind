@@ -1,10 +1,12 @@
 {
   "version": 2,
-  "rewrites": [
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/", "has": [{ "type": "query", "key": "c" }], "dest": "/api/share-ssr" },
     {
-      "source": "/",
-      "has": [{ "type": "query", "key": "c" }],
-      "destination": "/api/share-ssr"
-    }
+      "src": "/(.*\\.(?:js|css|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|json|xml|txt))$",
+      "continue": true
+    },
+    { "src": "/(.*)", "dest": "/$1" }
   ]
 }
