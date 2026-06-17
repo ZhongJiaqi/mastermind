@@ -110,11 +110,51 @@ const client = new Lark.Client({
   // 自动检测：APP_ID 以 cli_ 开头都是飞书/Lark 通用，默认即可
 });
 
+// Watchdog threshold: if the WS sits in `reconnecting` for this many
+// consecutive attempts, the process exits and lets launchd start a fresh
+// node — observed 2026-06-17 the SDK can wedge in an unbounded reconnect
+// loop where `unable to connect after trying N times` keeps logging but
+// the WS never recovers and events stop arriving entirely.
+const RECONNECT_THRESHOLD = 20;
+const HEALTH_CHECK_INTERVAL_MS = 15_000;
+
 const wsClient = new Lark.WSClient({
   appId: APP_ID,
   appSecret: APP_SECRET,
   loggerLevel: Lark.LoggerLevel.info,
+  // Liveness watchdog: if no inbound frame within 60s of the last ping the
+  // SDK kills the conn and starts reconnecting. Default is disabled, which
+  // is how a half-open socket can sit forever pretending it's alive.
+  wsConfig: { pingTimeout: 60 },
+  // Cap the per-attempt handshake so stuck DNS / proxy paths don't hang
+  // each retry indefinitely.
+  handshakeTimeoutMs: 30_000,
+  onReady: () => console.log('[ws] onReady — first connect established'),
+  onReconnecting: () => console.log('[ws] onReconnecting'),
+  onReconnected: () => console.log('[ws] onReconnected — counter reset'),
+  onError: (err) => {
+    console.error(
+      `[ws] FATAL onError — exiting for launchd restart: ${err.message}`,
+    );
+    setTimeout(() => process.exit(1), 100);
+  },
 });
+
+// Primary watchdog: poll the SDK's own reconnect counter. Exits with code 1
+// once threshold is hit; launchd (KeepAlive=true) restarts the process.
+setInterval(() => {
+  const status = wsClient.getConnectionStatus?.();
+  if (!status) return;
+  if (
+    status.state === 'reconnecting' &&
+    status.reconnectAttempts >= RECONNECT_THRESHOLD
+  ) {
+    console.error(
+      `[ws] FATAL — ${status.reconnectAttempts} consecutive reconnect attempts (threshold ${RECONNECT_THRESHOLD}), exiting for launchd restart`,
+    );
+    setTimeout(() => process.exit(1), 100);
+  }
+}, HEALTH_CHECK_INTERVAL_MS).unref?.();
 
 function stripBotMention(text: string): string {
   return text.replace(/^@_user_\d+\s*/, '').replace(/^@[一-龥\w·]+\s*/, '').trim();
