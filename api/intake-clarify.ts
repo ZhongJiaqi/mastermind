@@ -5,7 +5,8 @@ import { intakeClarifyRequestSchema } from './_shared/schemas';
 import { buildIntakePrompt } from './_shared/prompts/intake';
 import { tryWithChain } from './_shared/llm-chain';
 
-export const config = { runtime: 'edge' };
+// 同 api/council.ts —— 钉 hkg1 让 DashScope 调用走近路。
+export const config = { runtime: 'edge', regions: ['hkg1'] };
 
 // intake-clarify is a short JSON-only call. 30s is plenty after we strip
 // Qwen reasoning; tryWithChain falls through to the next model if a

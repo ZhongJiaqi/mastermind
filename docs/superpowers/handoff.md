@@ -1310,3 +1310,105 @@ npm run test    # ✅ 77 tests passed（原 57 + chain 新增 20）
 - 进程内 exhausted cache 是 module-scope Map：Vercel function instance 重建（冷启 / 部署）后清空，第一次还会踩一次 429 才知道 qwen3.6-max 挂了——成本可接受
 - 想升 full 版（Supabase 持久化 + auto-discovery）：照搬 ai-news-radar `supabase/migrations/006_llm_model_health.sql` + `lib/llm/discovery.ts`，多 ~1-2 天
 
+
+## 2026-06-16（午后）· 飞书 DM 圆桌 MVP 上线 + 长连接 + 选军师按钮
+
+### 用户体验
+
+```
+你飞书 DM 决策圆桌发问题
+  ↓
+1-2s 收到选军师卡：10 位 toggle 按钮 + 全选/全清/🚀 开始
+  ↓ （toggle 点哪个哪个真的 ⇄ 切换，约 600-900ms 反应）
+点 🚀 开始
+  ↓ 同张卡片变身「🧠 思考中」
+  ↓ 每 2s patch 一次卡片，长出讨论段（流式）
+  ↓ 到 10 段后切「汇总决策中 X/10」继续流式
+  ↓
+最终卡：10 张决策 + 底部「📖 在网页上看完整讨论」按钮
+  ↓ 按钮跳 https://mastermind-gamma-weld.vercel.app/?c=<shareId>
+  ↓
+网页：跟你自己在网页上请教完一场圆桌的视觉完全一致（左栏问题+军师勾选、右栏讨论+决策卡）
+```
+
+### 关键架构决定（踩坑积累）
+
+1. **不走 Vercel webhook，走飞书长连接** —— Vercel 国内无 PoP，飞书 → sin1 跨境 cold start ~2.8s 卡 3s 死线。改用飞书官方 Node SDK 的 `WSClient` 模式：我方主动持 WSS 连飞书云，事件通过这条 WS 推过来 → 0 跨境握手开销
+2. **`scripts/feishu-worker.ts` 是常驻进程** —— 必须 7×24 在线（关电脑就断）。当前跑在用户 Mac 上做 MVP；下一步迁 Railway 让真稳
+3. **`config.update_multi: true` 必须显式声明** —— 飞书 docs 隐藏要求，没这个 flag 任何 patchCard 的 API 返 code=0 但**用户视图不刷新**（silent fail，debug 了 1 小时）。所有 card builder 都加上了
+4. **card click 响应必须 RETURN 新卡** —— SDK 的 EventDispatcher invoke 返回值会被 WSClient JSON 序列化通过 WS 回飞书，飞书用这份数据**同步刷新点击者视图**。REST API 的 `im.v1.message.patch` 对正在看着卡片的活跃用户不刷新（这点 SDK README 没明确说）
+5. **click 事件去重不能靠 event_id** —— 飞书会把同一个 click 派发 2 次，每次 event_id 不同。改用 `(cardMessageId + operator + JSON.stringify(value))` 5s 滑动窗口
+6. **WSClient slot 独占** —— 同 app_id 只能有 1 个 WS 连接。worker 重启太快飞书 server 端旧 session 还没释放，新连接 reject。重启需要 **冷却 ~3-5 分钟**
+
+### 文件清单
+
+**新增**
+- `scripts/feishu-worker.ts` (~430 LOC) —— 常驻 worker：WSClient + DM/click 双 handler + selector flow + streaming council
+- `api/_shared/feishu/auth.ts` —— `tenant_access_token` 进程内缓存
+- `api/_shared/feishu/crypto.ts` —— AES-256-CBC 解密事件 payload（Web Crypto API，edge 兼容）
+- `api/_shared/feishu/send.ts` —— sendInteractiveCard + sendText helpers
+- `api/_shared/feishu/card.ts` —— card builder 全集：`buildCouncilCard`/`buildStreamingCard`/`buildSelectorCard`/`buildPendingCard` + `applySelectorAction` 纯函数 + `ActionDedup` class
+- `api/_shared/kv.ts` —— Upstash Redis REST API helper（fetch 三行 SET/GET/DEL，没 SDK 依赖）
+- `api/_shared/council-run.ts` —— `openCouncilStream` (流式给 SSE) + `runCouncilOnce` (drain 一次性给 webhook)
+- `api/feishu/webhook.ts` —— 备用 webhook 路径（已 deploy 但当前长连接模式不用，保留 1 个开关切回的可能）
+- `api/feishu/warmup.ts` + `.github/workflows/feishu-warmup.yml` —— GitHub Actions 5 分钟 cron ping warmup endpoint 保活 Vercel 函数（webhook 路径用）
+- `api/share.ts` —— GET `/api/share?id=<base62>` 读 KV → 304-cacheable JSON
+- `src/components/CouncilOutput.tsx` —— Discussion + Results 提取（编辑器 + share 视图共用）
+- `tests/unit/{kv,feishu-crypto,feishu-card,feishu-selector,llm-chain}.test.ts` —— 110 单测全过
+
+**改造**
+- `src/App.tsx` —— `?c=<shareId>` 命中时 fetch /api/share + dispatch 灌进 useMeeting state，编辑器 UI 直接渲染那次 council，视觉跟用户自己请教完一模一样
+- `api/council.ts` —— 走 openCouncilStream + 新增 `event: meta {modelUsed}` SSE 事件
+- `api/intake-clarify.ts` —— 走 tryWithChain（30s timeout）
+- `api/_shared/llm-chain.ts` —— slim 自愈链：env 链 + quota fallback + AbortController timeout + in-proc exhausted Map（无 Supabase）
+- `advisors/` —— 删除 aurelius + holmes，从 12 位 → 10 位
+- `vercel.json` —— 不加 cron（hobby 频次限制），靠 GitHub Actions
+- `.env.example` —— `LLM_MODEL_CHAIN="deepseek-v4-pro"` + 说明
+
+**关键 env vars**（Vercel + 本地 `.env.worker`）
+- 飞书：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_VERIFICATION_TOKEN / FEISHU_ENCRYPT_KEY
+- DashScope：DASHSCOPE_API_KEY / DASHSCOPE_BASE_URL / MODEL_SYNTHESIZER / MODEL_HOST / MODEL_ADVISOR / LLM_MODEL_CHAIN
+- KV：KV_REST_API_URL / KV_REST_API_TOKEN（Upstash via Vercel Marketplace）
+- `.env.worker` 本地汇总，gitignored；启动 worker：`node --env-file=.env.worker $(npm root)/.bin/tsx scripts/feishu-worker.ts`
+
+### 当前状态（2026-06-16 下午）
+
+- ✅ 飞书 DM 全链路打通：选军师 → toggle → 开始 → 流式讨论 → 决策 → 看完整讨论按钮 → 网页 ShareView 视觉一致
+- ✅ Vercel 部署 `mastermind-gamma-weld.vercel.app`（10 advisors / KV on）
+- ✅ 110 单测全过 / lint 0 错
+- ✅ 本地 Mac worker 跑通
+
+### 下一步（新会话）
+
+**待办 TODO**：
+1. **[高] 把 worker 迁 Railway**（~2-3 h）—— 现在跑用户 Mac，关机即断
+   - Railway 账号注册 + connect GitHub repo
+   - 加 8 个 env vars（FEISHU x 4, DASHSCOPE x 2, KV x 2）
+   - 写 Dockerfile 或用 nixpacks 自动构建
+   - 启动命令：`node --env-file=.env.worker $(npm root)/.bin/tsx scripts/feishu-worker.ts`（或不用 --env-file 直接读 Railway 注入的环境变量）
+   - 飞书后台「订阅方式」继续保持「长连接」，URL 不变
+2. **[中] commit + push 当前所有改动**（HANDOFF 这一段 + worker 优化）—— 建议本地 commit 但不立刻 push，确认 Railway 部署稳定后再 push（避免和 Vercel 部署冲突）
+3. **[低] DashScope qwen3.6-max-preview 2026-07-20 到期** —— chain 兜底已经接好 (deepseek-v4-pro)，不用慌但记得到期前手动跑一次确认 fallback OK
+4. **[低] commit `cli_aaba1cb44a3bdbd8`** 这个 app ID 是飞书后台「决策圆桌」自建应用的标识，可放心写入文档（不是 secret）
+
+**重启 worker 步骤**（如果 mac 重启了或 worker 挂了）：
+```bash
+cd /Users/jiaqizhong/mastermind/.worktrees/mastermind-v1
+# 如果 worker 之前刚被 kill，等 3-5 分钟让飞书释放 ws slot
+nohup node --env-file=.env.worker $(npm root)/.bin/tsx scripts/feishu-worker.ts > /tmp/feishu-worker.log 2>&1 &
+echo $! > /tmp/feishu-worker.pid
+tail -F /tmp/feishu-worker.log   # 看到 "ws client ready" 就 OK
+```
+
+**飞书后台 3 个关键 URL**（不要重新配，已经全配好）：
+- 基础信息：`https://open.feishu.cn/app/cli_aaba1cb44a3bdbd8/baseinfo`
+- 事件订阅（已选长连接 + 订阅 im.message.receive_v1）：`https://open.feishu.cn/app/cli_aaba1cb44a3bdbd8/event`
+- 回调配置（已选长连接接收回调）：`https://open.feishu.cn/app/cli_aaba1cb44a3bdbd8/event-callback`
+
+### 已知坑 / 教训（给下次 Claude 看）
+
+1. **debug 飞书 patch 失败要先查 `config.update_multi: true`** —— 没这个 flag 一切都是 silent fail
+2. **card click 一律 return 新卡，别用 REST patch**（除了流式 council 期间的中间态 patch，那是必要的）
+3. **重启 worker 前必须等 3-5 分钟 cooldown** —— 不然飞书拒新连接（slot 占用）
+4. **测试 toggle 前先看 log 有没有「returning new card」**，没的话 click 没到 worker（WS 断了）
+5. **手抓 raw click payload**：worker 已有 `[feishu-worker] card click raw =` 但目前默认关，需要时取消注释

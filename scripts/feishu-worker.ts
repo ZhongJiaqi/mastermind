@@ -1,0 +1,699 @@
+#!/usr/bin/env -S node --experimental-strip-types
+// ======================================================
+// Feishu long-connection worker
+//
+// Replaces the Vercel webhook for receiving messages — opens a
+// persistent WebSocket from THIS process to Feishu Cloud and waits for
+// im.message.receive_v1 events. Outbound (sending result cards) still
+// uses the same HTTP API via the SDK's bundled client.
+//
+// Runs as a long-lived process. Designed for Railway / Fly.io / etc.
+// 7×24 hosts where Mac sleep / cold start isn't a concern.
+//
+// Reuses the council + card + KV code that the Vercel webhook used —
+// only the entry point changes, not the business logic.
+//
+// Run locally:
+//   DASHSCOPE_API_KEY=… FEISHU_APP_ID=… FEISHU_APP_SECRET=… \
+//   KV_REST_API_URL=… KV_REST_API_TOKEN=… \
+//   npx tsx scripts/feishu-worker.ts
+// ======================================================
+
+import * as Lark from '@larksuiteoapi/node-sdk';
+
+import { ADVISORS } from '../src/generated/advisors';
+import { parseCouncilStream } from '../src/lib/councilParser';
+import { openCouncilStream } from '../api/_shared/council-run';
+import {
+  ActionDedup,
+  advisorIdFromCheckerName,
+  buildCouncilCard,
+  buildSelectorCard,
+  buildStreamingCard,
+  type AdvisorOption,
+} from '../api/_shared/feishu/card';
+import {
+  generateShareId,
+  isKvConfigured,
+  kvDelete,
+  kvGetJson,
+  kvSetJson,
+  KvError,
+} from '../api/_shared/kv';
+
+const SHARE_TTL_SECONDS = 60 * 60 * 24 * 90;
+// Pending selection blob lives for an hour — long enough for a user to
+// pick advisors at their own pace, short enough to keep KV tidy.
+const PENDING_TTL_SECONDS = 60 * 60;
+
+const ADVISOR_OPTIONS: AdvisorOption[] = ADVISORS.map((a) => ({
+  id: a.frontmatter.id,
+  name: a.frontmatter.name,
+  tagline: a.frontmatter.tagline,
+}));
+const ALL_ADVISOR_IDS = ADVISOR_OPTIONS.map((a) => a.id);
+
+interface PendingSelection {
+  openId: string;
+  question: string;
+  selectedIds: string[];
+  createdAt: number;
+}
+
+// In-memory cache for pending selections. The toggle hot path reads/writes
+// memory only; KV writes are fire-and-forget. Worker restart loses the
+// cache but KV reads on click recover state (one slow click after restart
+// is acceptable trade-off for ~600ms → ~10ms toggle latency).
+const pendingCache = new Map<string, PendingSelection>();
+function cacheSetPending(id: string, value: PendingSelection, ttlSeconds: number): void {
+  pendingCache.set(id, value);
+  setTimeout(() => pendingCache.delete(id), ttlSeconds * 1000).unref?.();
+}
+
+// Wrap a card object in the format Feishu's WS card.action.trigger
+// response requires: { card: { type: 'raw', data: <card-json> } }.
+// Returning a bare card object causes Feishu to time out the WS click
+// ack and toast 「目标回调服务超时未响应」 even when REST patch refreshes
+// the visible card.
+function cardResponse(card: object): object {
+  return { card: { type: 'raw', data: card } };
+}
+
+function trim(v: string | undefined): string {
+  return v?.trim() || '';
+}
+
+function publicBaseUrl(): string {
+  const explicit = trim(process.env.PUBLIC_BASE_URL);
+  if (explicit) return explicit.replace(/\/+$/, '');
+  return 'https://mastermind-gamma-weld.vercel.app';
+}
+
+function requireEnv(name: string): string {
+  const v = trim(process.env[name]);
+  if (!v) {
+    console.error(`[feishu-worker] missing env ${name}`);
+    process.exit(1);
+  }
+  return v;
+}
+
+const APP_ID = requireEnv('FEISHU_APP_ID');
+const APP_SECRET = requireEnv('FEISHU_APP_SECRET');
+// DashScope API key is the other hard requirement — council needs LLM.
+requireEnv('DASHSCOPE_API_KEY');
+
+const client = new Lark.Client({
+  appId: APP_ID,
+  appSecret: APP_SECRET,
+  // 中国版飞书走默认 domain；Lark 国际版用 Lark.Domain.Lark
+  // 自动检测：APP_ID 以 cli_ 开头都是飞书/Lark 通用，默认即可
+});
+
+// Watchdog threshold: if the WS sits in `reconnecting` for this many
+// consecutive attempts, the process exits and lets launchd start a fresh
+// node — observed 2026-06-17 the SDK can wedge in an unbounded reconnect
+// loop where `unable to connect after trying N times` keeps logging but
+// the WS never recovers and events stop arriving entirely.
+const RECONNECT_THRESHOLD = 20;
+const HEALTH_CHECK_INTERVAL_MS = 15_000;
+
+const wsClient = new Lark.WSClient({
+  appId: APP_ID,
+  appSecret: APP_SECRET,
+  loggerLevel: Lark.LoggerLevel.info,
+  // Liveness watchdog: if no inbound frame within 60s of the last ping the
+  // SDK kills the conn and starts reconnecting. Default is disabled, which
+  // is how a half-open socket can sit forever pretending it's alive.
+  wsConfig: { pingTimeout: 60 },
+  // Cap the per-attempt handshake so stuck DNS / proxy paths don't hang
+  // each retry indefinitely.
+  handshakeTimeoutMs: 30_000,
+  onReady: () => console.log('[ws] onReady — first connect established'),
+  onReconnecting: () => console.log('[ws] onReconnecting'),
+  onReconnected: () => console.log('[ws] onReconnected — counter reset'),
+  onError: (err) => {
+    console.error(
+      `[ws] FATAL onError — exiting for launchd restart: ${err.message}`,
+    );
+    setTimeout(() => process.exit(1), 100);
+  },
+});
+
+// Primary watchdog: poll the SDK's own reconnect counter. Exits with code 1
+// once threshold is hit; launchd (KeepAlive=true) restarts the process.
+setInterval(() => {
+  const status = wsClient.getConnectionStatus?.();
+  if (!status) return;
+  if (
+    status.state === 'reconnecting' &&
+    status.reconnectAttempts >= RECONNECT_THRESHOLD
+  ) {
+    console.error(
+      `[ws] FATAL — ${status.reconnectAttempts} consecutive reconnect attempts (threshold ${RECONNECT_THRESHOLD}), exiting for launchd restart`,
+    );
+    setTimeout(() => process.exit(1), 100);
+  }
+}, HEALTH_CHECK_INTERVAL_MS).unref?.();
+
+function stripBotMention(text: string): string {
+  return text.replace(/^@_user_\d+\s*/, '').replace(/^@[一-龥\w·]+\s*/, '').trim();
+}
+
+function parseTextMessageContent(raw: string | undefined): string {
+  if (!raw) return '';
+  try {
+    const parsed = JSON.parse(raw) as { text?: string };
+    return (parsed.text || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+async function sendText(openId: string, text: string): Promise<void> {
+  await client.im.v1.message.create({
+    params: { receive_id_type: 'open_id' },
+    data: {
+      receive_id: openId,
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+    },
+  });
+}
+
+interface CreateMessageResponse {
+  data?: { message_id?: string };
+}
+
+async function sendCard(openId: string, card: object): Promise<string | undefined> {
+  const resp = (await client.im.v1.message.create({
+    params: { receive_id_type: 'open_id' },
+    data: {
+      receive_id: openId,
+      msg_type: 'interactive',
+      content: JSON.stringify(card),
+    },
+  })) as CreateMessageResponse;
+  return resp.data?.message_id;
+}
+
+async function patchCard(messageId: string, card: object): Promise<void> {
+  // Feishu SDK API: PATCH /im/v1/messages/:message_id — replaces the
+  // entire card content (interactive msg_type only). The SDK does NOT
+  // throw on Feishu API errors (it returns { code, msg } with HTTP 200);
+  // we have to inspect and surface ourselves or the failure is silent.
+  const resp = (await client.im.v1.message.patch({
+    path: { message_id: messageId },
+    data: { content: JSON.stringify(card) },
+  })) as { code?: number; msg?: string; data?: unknown };
+  if (resp && typeof resp.code === 'number' && resp.code !== 0) {
+    console.warn(`[patchCard] feishu non-zero code=${resp.code} msg=${resp.msg ?? '?'}`);
+    throw new Error(`patchCard failed: code=${resp.code} msg=${resp.msg ?? '?'}`);
+  }
+}
+
+// Throttle interval between patches — short enough for the discussion
+// to feel live, long enough to leave headroom under Feishu's per-message
+// patch rate limits.
+const PATCH_INTERVAL_MS = 2000;
+
+// Entry called on each fresh DM. Pre-generates a 12-char pendingId so
+// the FIRST card we send already has correct values baked in — no
+// patch-with-real-pendingId step needed. Earlier, we sent a placeholder
+// card with pendingId='pending' literal then patched. If a user clicked
+// before patch landed, the click's pendingId was the literal 'pending'
+// string with no matching KV entry, triggering the "选择已过期" flash.
+async function sendSelectorOnDm(openId: string, rawQuestion: string): Promise<void> {
+  const question = stripBotMention(rawQuestion);
+  if (!question) return;
+
+  // Skip selector entirely when KV isn't configured — without persistent
+  // state we can't honor any user toggling.
+  if (!isKvConfigured()) {
+    console.warn('[selector] KV off, skipping selector → running with all 10');
+    await processCouncilDm(openId, question, ALL_ADVISOR_IDS);
+    return;
+  }
+
+  const pendingId = generateShareId(12);
+  const pendingValue: PendingSelection = {
+    openId,
+    question,
+    selectedIds: ALL_ADVISOR_IDS,
+    createdAt: Date.now(),
+  };
+
+  // Memory cache first (cheap), then KV (durable). Both happen before
+  // the card goes out so even the fastest click race finds state.
+  cacheSetPending(pendingId, pendingValue, PENDING_TTL_SECONDS);
+  try {
+    await kvSetJson<PendingSelection>(`pending:${pendingId}`, pendingValue, PENDING_TTL_SECONDS);
+  } catch (err) {
+    pendingCache.delete(pendingId);
+    console.error('[selector] KV write failed, falling back to all-10 council', err);
+    await processCouncilDm(openId, question, ALL_ADVISOR_IDS);
+    return;
+  }
+
+  // Now send the card; buttons carry the real pendingId from the start.
+  let messageId: string | undefined;
+  try {
+    messageId = await sendCard(
+      openId,
+      buildSelectorCard({
+        pendingId,
+        question,
+        allAdvisors: ADVISOR_OPTIONS,
+        selectedIds: ALL_ADVISOR_IDS,
+      }),
+    );
+  } catch (err) {
+    console.error('[selector] card send failed', err);
+    await kvDelete(`pending:${pendingId}`).catch(() => undefined);
+    await sendText(openId, `❌ 发送选军师卡片失败：${err instanceof Error ? err.message : String(err)}`).catch(() => undefined);
+    return;
+  }
+
+  console.log(
+    `[selector] sent selector card pendingId=${pendingId} messageId=${messageId ?? '(unknown)'} from=${openId.slice(-6)}`,
+  );
+}
+
+async function processCouncilDm(
+  openId: string,
+  rawQuestion: string,
+  selectedAdvisorIds: string[],
+  reuseMessageId?: string,
+): Promise<void> {
+  const question = stripBotMention(rawQuestion);
+  if (!question) return;
+  const t0 = Date.now();
+  const log = (msg: string) => console.log(`[council ${openId.slice(-6)}] +${Date.now() - t0}ms ${msg}`);
+
+  const selected = ADVISORS.filter((a) => selectedAdvisorIds.includes(a.frontmatter.id));
+  if (selected.length === 0) {
+    await sendText(openId, '⚠️ 至少选一位军师才能开议').catch(() => undefined);
+    return;
+  }
+  const advisorIds = selected.map((a) => a.frontmatter.id);
+  const advisorNames = selected.map((a) => a.frontmatter.name);
+  log(`start question="${question.slice(0, 50)}…" advisors=${advisorIds.length}`);
+
+  // If the selector flow handed us its message_id, patch it in-place so
+  // the user sees the selector morph into a "thinking" card. Otherwise
+  // send a fresh card (selector-skipped fallback path).
+  let messageId: string | undefined = reuseMessageId;
+  const initialThinkingCard = buildStreamingCard({
+    question,
+    advisorCount: selected.length,
+    messages: [],
+    done: false,
+  });
+  try {
+    if (messageId) {
+      await patchCard(messageId, initialThinkingCard);
+      log(`reused selector card message_id=${messageId}`);
+    } else {
+      messageId = await sendCard(openId, initialThinkingCard);
+      log(`initial card sent message_id=${messageId}`);
+    }
+  } catch (err) {
+    console.error('[feishu-worker] initial card send/patch failed', err);
+    await sendText(openId, `📝 收到：${question}\n🧠 召集中……`).catch(() => undefined);
+  }
+
+  // Open the LLM stream and drain it while throttle-patching the card.
+  // Patches are serialized through patchChain — patchChain.then(next) ensures
+  // a slow patch can't be overtaken by a newer one and overwrite it back to
+  // a stale state. Without this, fire-and-forget patches race and the user
+  // sees the card "go backwards" or freeze on an intermediate state.
+  let fullText = '';
+  let modelUsed = 'unknown';
+  let lastPatchAt = 0;
+  let lastPatchedStateKey = '';
+  let patchChain: Promise<void> = Promise.resolve();
+  let patchesAttempted = 0;
+
+  // Count partial advisor cards inside the streaming <conclusions> block.
+  // After </discussion> closes, the LLM spends 30-60s emitting JSON cards;
+  // we use "advisorId" occurrences in that segment as a proxy for how many
+  // decisions have been generated so far. Without this signal the card UI
+  // would freeze on the discussion-only count for the entire conclusions
+  // phase (the visible "stuck after 10 段" symptom).
+  const countPartialCards = (text: string): number => {
+    const idx = text.indexOf('<conclusions>');
+    if (idx < 0) return 0;
+    return (text.slice(idx).match(/"advisorId"/g) || []).length;
+  };
+
+  try {
+    const { stream, modelUsed: m } = await openCouncilStream({
+      advisors: selected as unknown as Parameters<typeof openCouncilStream>[0]['advisors'],
+      session: { question },
+    });
+    modelUsed = m;
+    log(`LLM stream opened model=${modelUsed}`);
+
+    for await (const chunk of stream) {
+      const text = chunk.choices?.[0]?.delta?.content ?? '';
+      if (!text) continue;
+      fullText += text;
+
+      if (!messageId) continue;
+      const now = Date.now();
+      if (now - lastPatchAt < PATCH_INTERVAL_MS) continue;
+
+      const parsed = parseCouncilStream(fullText);
+      const partialCards = countPartialCards(fullText);
+      const stateKey = `${parsed.messages.length}|${partialCards}`;
+      if (stateKey === lastPatchedStateKey) continue;
+      lastPatchedStateKey = stateKey;
+      lastPatchAt = now;
+      patchesAttempted++;
+
+      const intermediateCard = buildStreamingCard({
+        question,
+        advisorCount: selected.length,
+        messages: parsed.messages,
+        done: false,
+        modelUsed,
+        partialCardCount: partialCards,
+      });
+      const seqMessages = parsed.messages.length;
+      // Serialize on patchChain — the new patch waits for the previous
+      // patch to finish before starting. Stream consumption continues
+      // independently so chunk accumulation isn't blocked.
+      patchChain = patchChain.then(() =>
+        patchCard(messageId!, intermediateCard)
+          .then(() => log(`patched (msgs=${seqMessages}, cards=${partialCards}, fullText=${fullText.length}b)`))
+          .catch((err) => console.warn(`[council] intermediate patch failed`, err)),
+      );
+    }
+    log(`stream ended fullText=${fullText.length}b patches=${patchesAttempted}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[feishu-worker] council stream failed', msg);
+    if (messageId) {
+      const errorCard = buildStreamingCard({
+        question,
+        advisorCount: ADVISORS.length,
+        messages: parseCouncilStream(fullText).messages,
+        done: true,
+        modelUsed,
+      });
+      await patchCard(messageId, errorCard).catch(() => undefined);
+    }
+    await sendText(
+      openId,
+      `❌ 对不起，军师们正在路上……\n${msg.slice(0, 200)}\n（稍后重试一下）`,
+    ).catch(() => undefined);
+    return;
+  }
+
+  const parsed = parseCouncilStream(fullText);
+  log(`parse done messages=${parsed.messages.length} cards=${parsed.cards?.length ?? 'null'}`);
+
+  let shareUrl = '';
+  if (isKvConfigured()) {
+    try {
+      const shareId = generateShareId();
+      await kvSetJson(
+        `share:${shareId}`,
+        {
+          question,
+          selectedAdvisorIds: advisorIds,
+          fullText,
+          modelUsed,
+          source: 'feishu',
+          createdAt: Date.now(),
+        },
+        SHARE_TTL_SECONDS,
+      );
+      shareUrl = `${publicBaseUrl()}/?c=${shareId}`;
+      log(`KV stored shareId=${shareId}`);
+    } catch (err) {
+      const msg = err instanceof KvError ? err.message : String(err);
+      console.error('[feishu-worker] KV write failed, dropping share button', msg);
+    }
+  }
+
+  const finalCard = buildCouncilCard({
+    question,
+    advisorNames,
+    cards: parsed.cards ?? [],
+    discussionMessages: parsed.messages,
+    shareUrl: shareUrl || publicBaseUrl(),
+    modelUsed,
+  });
+
+  // Wait for the in-flight intermediate-patch chain to drain BEFORE
+  // submitting the final patch. Otherwise a stale intermediate landing
+  // late would overwrite the final card with discussion-only content.
+  await patchChain.catch(() => undefined);
+
+  if (messageId) {
+    try {
+      await patchCard(messageId, finalCard);
+      log(`final card patched in (total ${Date.now() - t0}ms)`);
+      return;
+    } catch (err) {
+      console.error('[feishu-worker] final patch failed, falling back to new message', err);
+    }
+  }
+  // No messageId or final patch failed — send a brand-new card so the
+  // user still gets the result.
+  try {
+    await sendCard(openId, finalCard);
+  } catch (err) {
+    console.error('[feishu-worker] final card send failed', err);
+    await sendText(
+      openId,
+      `⚠️ 卡片发送失败。给你纯文本版结论：\n\n${(parsed.cards ?? [])
+        .map((c) => `· ${c.characterName}：${c.conclusion}`)
+        .join('\n') || '（解析失败，无法展示）'}`,
+    ).catch(() => undefined);
+  }
+}
+
+// Track in-flight messages so SDK retries (same message_id) don't run
+// council twice — every council is ~30s of LLM time, dedupe matters.
+const inflight = new Set<string>();
+
+// ----------------------- Card click handler -----------------------
+
+// With Card 2.0 form + checkers, checking/unchecking advisors happens
+// entirely client-side (zero server roundtrip). The ONLY server-side
+// action is when the user clicks the submit button — at which point
+// Feishu delivers form_value (a map of checker name → checked state)
+// alongside the button's payload.
+interface SubmitActionValue {
+  action?: 'start_council';
+  pendingId?: string;
+}
+
+async function handleFormSubmit(payload: {
+  pendingId: string;
+  cardMessageId: string;
+  clickerOpenId: string;
+  formValue: Record<string, unknown>;
+}): Promise<object | undefined> {
+  const { pendingId, cardMessageId, clickerOpenId, formValue } = payload;
+
+  // Look up question + openId (originally stored when the card was sent).
+  let pending: PendingSelection | null = pendingCache.get(pendingId) ?? null;
+  if (!pending) {
+    try {
+      pending = await kvGetJson<PendingSelection>(`pending:${pendingId}`);
+    } catch (err) {
+      console.error('[selector] KV read failed', err);
+    }
+  }
+  if (!pending) {
+    console.warn(`[selector] no pending blob for ${pendingId} (expired)`);
+    const expiredCard = {
+      schema: '2.0',
+      config: { wide_screen_mode: true, update_multi: true },
+      header: { template: 'red', title: { tag: 'plain_text', content: '决策圆桌 · 选择已过期' } },
+      body: {
+        elements: [
+          {
+            tag: 'markdown',
+            content: '⚠️ 这张选军师卡片已过期（>1 小时）或被清除。请重新发送你的问题。',
+          },
+        ],
+      },
+    };
+    patchCard(cardMessageId, expiredCard).catch(() => undefined);
+    return cardResponse(expiredCard);
+  }
+
+  // Derive selected advisors from form_value (advisor checker names look
+  // like `adv_buffett`; the rest are non-advisor form fields we ignore).
+  const selectedIds: string[] = [];
+  for (const [name, checked] of Object.entries(formValue)) {
+    const advisorId = advisorIdFromCheckerName(name);
+    if (advisorId && checked === true && ALL_ADVISOR_IDS.includes(advisorId)) {
+      selectedIds.push(advisorId);
+    }
+  }
+  // Keep canonical advisor order for downstream council prompts.
+  const orderedSelected = ALL_ADVISOR_IDS.filter((id) => selectedIds.includes(id));
+
+  if (orderedSelected.length === 0) {
+    console.log('[selector] form submitted with 0 selected — re-prompting');
+    const reprompt = buildSelectorCard({
+      pendingId,
+      question: pending.question,
+      allAdvisors: ADVISOR_OPTIONS,
+      selectedIds: [],
+    });
+    patchCard(cardMessageId, reprompt).catch(() => undefined);
+    return cardResponse(reprompt);
+  }
+
+  console.log(
+    `[selector] form submitted by ${clickerOpenId.slice(-6)} → ${orderedSelected.length} advisors: ${orderedSelected.join(',')}`,
+  );
+  pendingCache.delete(pendingId);
+  void kvDelete(`pending:${pendingId}`).catch(() => undefined);
+
+  // Kick off council in the background; immediately return a thinking
+  // card so Feishu replaces the selector on the clicker's view fast.
+  const thinkingCard = buildStreamingCard({
+    question: pending.question,
+    advisorCount: orderedSelected.length,
+    messages: [],
+    done: false,
+  });
+  void processCouncilDm(pending.openId, pending.question, orderedSelected, cardMessageId).catch((err) => {
+    console.error('[selector] background council threw', err);
+  });
+  return cardResponse(thinkingCard);
+}
+
+wsClient.start({
+  eventDispatcher: new Lark.EventDispatcher({}).register({
+    'im.message.receive_v1': async (data: unknown) => {
+      const d = data as {
+        sender?: { sender_id?: { open_id?: string }; sender_type?: string };
+        message?: {
+          message_id?: string;
+          chat_type?: string;
+          message_type?: string;
+          content?: string;
+        };
+      };
+      const openId = d.sender?.sender_id?.open_id;
+      const messageId = d.message?.message_id;
+      if (
+        d.sender?.sender_type !== 'user' ||
+        d.message?.chat_type !== 'p2p' ||
+        d.message?.message_type !== 'text' ||
+        !openId ||
+        !messageId
+      ) {
+        console.log(
+          `[feishu-worker] event filtered out type=${d.message?.message_type} chat=${d.message?.chat_type}`,
+        );
+        return;
+      }
+      if (inflight.has(messageId)) {
+        console.log(`[feishu-worker] dedupe ${messageId} (already in-flight)`);
+        return;
+      }
+      inflight.add(messageId);
+      console.log(`[feishu-worker] event received message_id=${messageId} from=${openId.slice(-6)}`);
+      try {
+        const text = parseTextMessageContent(d.message.content);
+        if (text) {
+          await sendSelectorOnDm(openId, text);
+        } else {
+          console.log(`[feishu-worker] empty text content message_id=${messageId}`);
+        }
+      } catch (err) {
+        console.error(`[feishu-worker] sendSelectorOnDm threw for ${messageId}`, err);
+      } finally {
+        // Hold the dedupe entry for 5 minutes — long enough that SDK
+        // retries can't double-fire, short enough that Set can't grow
+        // unbounded over the worker's uptime.
+        setTimeout(() => inflight.delete(messageId), 5 * 60 * 1000);
+      }
+    },
+    // Register every plausible card-action event name; Feishu has historically
+    // emitted any of these depending on SDK version + console settings.
+    'card.action.trigger': cardClickHandler,
+    'card.action.trigger_v1': cardClickHandler,
+    'im.card.action.trigger': cardClickHandler,
+    'card.action': cardClickHandler,
+  }),
+});
+
+// Dedup duplicate submit clicks. Feishu sometimes pushes the same logical
+// click twice with DIFFERENT event_ids — so event_id-based dedup misses
+// them. Identity is (cardMessageId, operator, action.value-serialized).
+// 5s window is long enough to catch SDK double-dispatch, short enough
+// that an intentional re-submit later still works.
+const clickDedup = new ActionDedup(5000);
+
+async function cardClickHandler(data: unknown): Promise<object | undefined> {
+  const d = data as {
+    event_id?: string;
+    action?: {
+      value?: SubmitActionValue;
+      form_value?: Record<string, unknown>;
+      name?: string;
+      tag?: string;
+    };
+    operator?: { open_id?: string };
+    context?: { open_message_id?: string };
+  };
+
+  const value = d.action?.value;
+  const formValue = d.action?.form_value ?? {};
+  const cardMessageId = d.context?.open_message_id;
+  const clickerOpenId = d.operator?.open_id;
+  if (!value?.action || !value.pendingId || !cardMessageId || !clickerOpenId) {
+    console.warn('[feishu-worker] card click missing required fields', JSON.stringify(d).slice(0, 300));
+    return undefined;
+  }
+
+  const actionKey = `${cardMessageId}:${clickerOpenId}:${JSON.stringify(value)}`;
+  if (!clickDedup.shouldProcess(actionKey)) {
+    console.log(
+      `[feishu-worker] dedupe duplicate submit action=${value.action} event_id=${d.event_id ?? '?'}`,
+    );
+    return undefined;
+  }
+
+  if (value.action !== 'start_council') {
+    console.warn(`[feishu-worker] unrecognized action=${value.action} (only start_council supported in form mode)`);
+    return undefined;
+  }
+
+  try {
+    return await handleFormSubmit({
+      pendingId: value.pendingId,
+      cardMessageId,
+      clickerOpenId,
+      formValue,
+    });
+  } catch (err) {
+    console.error('[feishu-worker] form submit handler threw', err);
+    return undefined;
+  }
+}
+
+console.log(
+  `[feishu-worker] started — appId=${APP_ID} advisors=${ADVISORS.length} kv=${isKvConfigured() ? 'on' : 'off'}`,
+);
+
+// Keep the process alive — WSClient already does this via its socket,
+// but adding an explicit SIGTERM trap makes Railway / Fly.io stops clean.
+process.on('SIGTERM', () => {
+  console.log('[feishu-worker] SIGTERM — shutting down');
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  console.log('[feishu-worker] SIGINT — shutting down');
+  process.exit(0);
+});
