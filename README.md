@@ -56,7 +56,7 @@
 - **前端**：Vite + React 19 + TypeScript + Tailwind CSS 4 + Motion (Framer Motion 后继)
 - **LLM**：阿里云百炼 DashScope（OpenAI 兼容端点）调 Qwen 3.x（默认 `qwen3.6-max-preview`） + 自愈兜底链（quota/timeout 时自动切下一个模型）
 - **后端**：Vercel Edge Functions（runtime: 'edge'，maxDuration 60s），SSE 流式响应
-- **Edge Middleware**：`middleware.ts` 拦截 `/?c=<shareId>`，服务端从 KV 取 share 数据，**SSR 内容到 `<div id="root">`** + 注入 `window.__INITIAL_SHARE__`，HTML 落地即可见内容（不等 JS bundle）
+- **Share view SSR**：`api/share-ssr.ts`（Edge runtime, hkg1 region）拦截 `/?c=<shareId>`，从 KV 取 share blob 服务端 SSR 到 `<div id="root">` + 注入 `window.__INITIAL_SHARE__`，HTML 落地即可见内容（首屏从 ~1s 空白降到 ~250ms）。`vercel.json` 用 `routes` 字段（priority over filesystem）把 `/?c=` 路由到这个 endpoint
 - **飞书 DM**：`@larksuiteoapi/node-sdk` `WSClient` 长连接，selector 走 Card 2.0 `form` + `checker`（客户端 local state，toggle 零服务端往返），KV 持久化 share blob 供网页拉取
 - **持久化**：Upstash Redis（KV REST），存 selector pending state + share blob
 - **测试**：Vitest（17 文件 / 110 单元 + 集成测试）
@@ -116,9 +116,9 @@ vercel env add DASHSCOPE_API_KEY production
 vercel --prod
 ```
 
-`vercel.json` 已配置 edge runtime + 60s maxDuration。`middleware.ts` 在 repo root，部署时 Vercel 自动识别。
+`vercel.json` 用 `routes` 字段把 `/?c=<id>` 路由到 `api/share-ssr`（必须用 `routes` 不能用 `rewrites`，否则静态 index.html 优先 serve，路由不生效）。`api/*` 目录下其他文件由 Vercel auto-detect 为 Edge Functions。
 
-**KV（Upstash Redis）**：Vercel Dashboard → Storage → Marketplace 装 Upstash for Redis，会自动注入 `KV_REST_API_URL` + `KV_REST_API_TOKEN`。middleware + 飞书 share 通道都依赖这两个变量。
+**KV（Upstash Redis）**：Vercel Dashboard → Storage → Marketplace 装 Upstash for Redis，会自动注入 `KV_REST_API_URL` + `KV_REST_API_TOKEN`。`api/share-ssr` SSR 注入 + 飞书 worker share blob 通道都依赖这两个变量。
 
 ## 飞书 DM 集成
 
@@ -129,7 +129,7 @@ vercel --prod
 - **selector 用 Card 2.0 `form` + `checker`**：勾选/取消军师走客户端 local state，零服务端往返，秒响应。只有「🚀 开始讨论」按钮才走 worker
 - **WSClient 长连接而非 webhook**：飞书 webhook 3 秒 ack 死线对 Vercel edge 冷启动太紧，且 China → Vercel sin1 延迟不稳。`scripts/feishu-worker.ts` 跑常驻进程，从 worker 向飞书开 WS，避开所有冷启动
 - **流式 patch**：council SSE 流过来时，每 2s 把当前 parse 出的讨论 patch 到同一张卡片，给用户「逐字打字」的实时感
-- **`?c=<shareId>` 跳网页**：worker 在 KV 存 share blob，「在网页上看完整讨论」按钮链接到 `/?c=<shareId>`，`middleware.ts` 服务端注入数据 + SSR 内容，HTML 一到就看到讨论 + 决策（不等 JS bundle）
+- **`?c=<shareId>` 跳网页**：worker 在 KV 存 share blob，「在网页上看完整讨论」按钮链接到 `/?c=<shareId>`，`api/share-ssr.ts` 服务端注入数据 + SSR 内容，HTML 一到就看到讨论 + 决策（不等 JS bundle）
 
 **飞书后台配置**（一次性）：
 1. 开发者后台创建企业自建应用，权限给 `im:message` + `im:message:send_as_bot`
@@ -154,15 +154,22 @@ PUBLIC_BASE_URL=https://mastermind-gamma-weld.vercel.app
 
 **运行 worker**：
 
+worker 内置三层 WS watchdog（`wsConfig.pingTimeout: 60` SDK liveness + `handshakeTimeoutMs: 30000` + `setInterval` poll `reconnectAttempts >= 20` 触发 `process.exit(1)`），需要配进程级 supervisor 自动拉起。推荐 macOS launchd（KeepAlive=true），也支持手动 nohup。
+
 ```bash
-# 本地：把 11 个变量塞 .env.worker，nohup 跑常驻进程
+# 方案 1（推荐）：launchd 管理
+# 写 ~/Library/LaunchAgents/com.your.app.feishu-worker.plist (KeepAlive=true / ThrottleInterval=10 / RunAtLoad=true)
+launchctl load ~/Library/LaunchAgents/com.your.app.feishu-worker.plist
+launchctl list | grep feishu-worker    # state=0 表示正常
+
+# 方案 2：手动 nohup（适合短期调试）
 nohup node --env-file=.env.worker $(npm root)/.bin/tsx scripts/feishu-worker.ts \
   > /tmp/feishu-worker.log 2>&1 &
 echo $! > /tmp/feishu-worker.pid
-tail -F /tmp/feishu-worker.log    # 看到 "ws client ready" 就能用了
-
 # 让 Mac 不睡眠（worker 是长连接，Mac 一睡就断）
 nohup caffeinate -dimsu > /dev/null 2>&1 &
+
+tail -F /tmp/feishu-worker.log    # 看到 "ws client ready" 就能用了
 ```
 
 **部署到云端**（Railway / Fly.io / VPS）：`package.json` 已配好 `npm start`（`tsx scripts/feishu-worker.ts`），把 11 个 env 灌到平台即可。`.github/workflows/feishu-worker.yml` 提供 GitHub Actions cron-chain 兜底方案（公开仓库免费跑，但每 6h rollover 会撞飞书 WS slot 3-5min 空窗，体验差，默认 `disabled_manually`，需要时 `gh workflow enable "Feishu Worker"` 启用）。
@@ -184,6 +191,7 @@ mastermind/
 │   ├── council.ts                 # 单次 SSE 调用同时演多位军师
 │   ├── intake-clarify.ts          # 主持人追问（暂未启用，预留接口）
 │   ├── share.ts                   # GET /api/share?id=<shareId> 取 KV blob
+│   ├── share-ssr.ts               # `/?c=<id>` 路由到这：SSR 注入 + window.__INITIAL_SHARE__
 │   └── _shared/
 │       ├── llm-chain.ts           # 自愈兜底链（quota 切下一模型）
 │       ├── council-run.ts         # SSE 流共享给 worker 复用
@@ -206,7 +214,7 @@ mastermind/
 │   ├── gen-advisors.ts            # 一次性生成 vault
 │   ├── feishu-worker.ts           # 飞书 WS 长连接 worker（常驻进程）
 │   └── smoke.mjs                  # E2E smoke
-├── middleware.ts                  # Vercel Edge Middleware：share 页 SSR + 数据注入
+├── middleware.ts                  # ⚠️ DEPRECATED 保留作历史警告：Vite 下 Vercel 不 auto-detect root middleware.ts，逻辑已迁到 api/share-ssr.ts
 ├── .github/workflows/
 │   └── feishu-worker.yml          # GitHub Actions cron-chain 兜底（默认 disabled）
 └── docs/superpowers/              # spec / plan / handoff（开发过程档案）
