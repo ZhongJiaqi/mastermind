@@ -21,9 +21,12 @@
 
 ![主界面：描述困境 + 选择军师](docs/screenshots/home.png)
 
-<!-- TODO(素材): ① 辩论流式输出 + 决策卡结果截图（当前模型链免费额度到期，恢复后补截）
-     ② 分享页 /?c=<id> 截图
-     ③ 飞书机器人三张卡片截图（选人 / 流式 / 决策卡，需从飞书客户端手动截） -->
+一场真实圆桌（2026-07-24 实录）——巴菲特/芒格/卡尼曼辩论「年终奖加仓还是留现金」，随后每人一张决策卡：
+
+![辩论 + 决策卡](docs/screenshots/run.png)
+
+<!-- TODO(素材): ① 分享页 /?c=<id> 截图
+     ② 飞书机器人三张卡片截图（选人 / 流式 / 决策卡，需从飞书客户端手动截） -->
 
 在线体验：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app)
 
@@ -46,7 +49,7 @@ npm run dev                  # http://localhost:3000
 
 ## 技术方案（简）
 
-React 19 + Vite + Tailwind 4；Vercel Edge Functions 做 SSE 流式输出，钉在 `hkg1` 就近阿里云 DashScope；分享数据存 Upstash Redis。数据流：前端把问题 + 选中军师 POST 到 edge → 单次 LLM 调用让模型分饰多角，输出 `<discussion>` 讨论块 + `<conclusions>` JSON → 客户端增量解析渲染。飞书侧一个 WSClient 长连接 worker 复用同一条 council 链路。
+React 19 + Vite + Tailwind 4；Vercel Edge Functions 做 SSE 流式输出（LLM 端点钉 `sfo1`——2026-07 实测 hkg1→DashScope 跨境链路挂起后迁移）；分享数据存 Upstash Redis。数据流：前端把问题 + 选中军师 POST 到 edge → 单次 LLM 调用让模型分饰多角，输出 `<discussion>` 讨论块 + `<conclusions>` JSON → 客户端增量解析渲染。飞书侧一个 WSClient 长连接 worker 复用同一条 council 链路。
 
 ## 设计取舍
 
