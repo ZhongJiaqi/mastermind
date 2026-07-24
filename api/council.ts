@@ -4,10 +4,11 @@ import { councilRequestSchema } from './_shared/schemas';
 import { createStreamedResponse } from './_shared/sse';
 import { openCouncilStream } from './_shared/council-run';
 
-// hkg1（香港）距 DashScope（阿里云中国）只有 ~50ms RTT。默认让 Vercel 全球
-// 路由的话，美国 / 欧洲 user 的请求会从 sfo1/cdg1 等 POP 调中国 API，跨洋
-// RTT × 流式响应几十秒 = 必撞 edge function 30s 硬墙超时。
-export const config = { runtime: 'edge', regions: ['hkg1'] };
+// 2026-07-24 实测翻案：hkg1 → DashScope 大陆端点连接挂起 >60s（拿不到
+// response headers，meta 都发不出），而美西出口直连同端点 1s 返回首包。
+// 香港→大陆跨境链路已不可靠；流式响应下跨洋只多一次连接 RTT，不影响
+// 吞吐，故改钉 sfo1。（4 月钉 hkg1 的原注释见 git 历史 a5deb26。）
+export const config = { runtime: 'edge', regions: ['sfo1'] };
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', 'POST only', 405);
