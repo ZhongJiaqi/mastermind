@@ -2,7 +2,7 @@
 
 > 让顶级思维模型帮你做决策。
 
-网页版：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app) · 飞书 DM 机器人：私聊提问 → 勾选军师 → 卡片流式出结果
+飞书 DM 机器人：私聊提问 → 勾选军师 → 卡片流式出结果
 
 ## 为什么做这个
 
@@ -53,8 +53,6 @@ Mastermind 就是这份决策清单的自动化版本：把 10 位人物各自�
 | 选人卡 | 决策卡 |
 |---|---|
 | ![飞书选人卡](docs/screenshots/feishu-selector.png) | ![飞书决策卡](docs/screenshots/feishu-card.png) |
-
-在线体验：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app)
 
 ## 快速开始
 
