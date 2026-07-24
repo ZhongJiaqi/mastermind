@@ -65,7 +65,7 @@ npm run dev                  # http://localhost:3000
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 分享页需要 | Upstash Redis，存分享 blob（Vercel 集成自动注入） |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书需要 | 自建应用凭证，`npm start` 起长连接 worker |
 
-全部变量说明见 [.env.example](.env.example)。测试：`npm test`（110 个单测 + 集成）。
+全部变量说明见 [.env.example](.env.example)。测试：`npm test`（111 个单测 + 集成）。
 
 ## 技术方案（简）
 
