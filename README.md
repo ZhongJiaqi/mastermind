@@ -1,6 +1,6 @@
 # Mastermind 智囊团 — 让 10 位大师"吵"完，你再做决定
 
-> 给读过很多思维模型、却难在真实决策中用上它们的人的 AI 决策参谋——一份会自己运转的芒格式决策清单。
+> 让顶级思维模型帮你做决策。
 
 网页版：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app) · 飞书 DM 机器人：私聊提问 → 勾选军师 → 卡片流式出结果
 
