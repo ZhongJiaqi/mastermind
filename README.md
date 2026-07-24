@@ -25,8 +25,11 @@
 
 ![辩论 + 决策卡](docs/screenshots/run.png)
 
-<!-- TODO(素材): ① 分享页 /?c=<id> 截图
-     ② 飞书机器人三张卡片截图（选人 / 流式 / 决策卡，需从飞书客户端手动截） -->
+**飞书 DM 入口** —— 私聊提问 → 卡片勾选军师 → 决策建议卡，按钮跳回网页完整讨论：
+
+| 选人卡 | 决策卡 |
+|---|---|
+| ![飞书选人卡](docs/screenshots/feishu-selector.png) | ![飞书决策卡](docs/screenshots/feishu-card.png) |
 
 在线体验：[mastermind-gamma-weld.vercel.app](https://mastermind-gamma-weld.vercel.app)
 
