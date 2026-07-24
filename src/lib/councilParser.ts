@@ -74,6 +74,44 @@ function parseDiscussion(block: string): DiscussionMessage[] {
   return messages;
 }
 
+/**
+ * 修复 LLM（实测 glm-5.2）在 JSON 字符串值内部输出未转义英文双引号的坏 JSON：
+ * `"reasoning": "先列出"什么会逼我亏钱"，再逐条堵死。"` → JSON.parse 直接炸。
+ * 判定规则：字符串内遇到 `"` 时向后看第一个非空白字符——是 `,` `}` `]` `:` 或
+ * 已到结尾则视为闭合引号，否则视为值内容里的引号，转义之。
+ */
+function escapeInnerQuotes(raw: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch + (raw[i + 1] ?? '');
+      i++;
+      continue;
+    }
+    if (ch !== '"') {
+      out += ch;
+      continue;
+    }
+    let j = i + 1;
+    while (j < raw.length && /\s/.test(raw[j])) j++;
+    const next = raw[j];
+    if (next === undefined || next === ',' || next === '}' || next === ']' || next === ':') {
+      inString = false;
+      out += ch;
+    } else {
+      out += '\\"';
+    }
+  }
+  return out;
+}
+
 function parseConclusions(block: string): DecisionCard[] | null {
   const stripped = block
     .trim()
@@ -81,25 +119,28 @@ function parseConclusions(block: string): DecisionCard[] | null {
     .replace(/\n?```\s*$/i, '')
     .trim();
   if (!stripped) return null;
-  try {
-    const parsed = JSON.parse(stripped) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    // 弱校验：每个元素至少得有 advisorId / characterName / conclusion
-    const cards = parsed.filter((c): c is DecisionCard => {
-      if (typeof c !== 'object' || c === null) return false;
-      const card = c as Record<string, unknown>;
-      return (
-        typeof card.advisorId === 'string' &&
-        typeof card.characterName === 'string' &&
-        typeof card.conclusion === 'string' &&
-        typeof card.reasoning === 'string' &&
-        Array.isArray(card.mentalModels)
-      );
-    });
-    return cards.length > 0 ? cards : null;
-  } catch {
-    return null;
+  for (const candidate of [stripped, escapeInnerQuotes(stripped)]) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (!Array.isArray(parsed)) return null;
+      // 弱校验：每个元素至少得有 advisorId / characterName / conclusion
+      const cards = parsed.filter((c): c is DecisionCard => {
+        if (typeof c !== 'object' || c === null) return false;
+        const card = c as Record<string, unknown>;
+        return (
+          typeof card.advisorId === 'string' &&
+          typeof card.characterName === 'string' &&
+          typeof card.conclusion === 'string' &&
+          typeof card.reasoning === 'string' &&
+          Array.isArray(card.mentalModels)
+        );
+      });
+      return cards.length > 0 ? cards : null;
+    } catch {
+      // 原文 parse 失败 → 尝试引号修复版；两版都失败 → null（流式中段属正常）
+    }
   }
+  return null;
 }
 
 /**

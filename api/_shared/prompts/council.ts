@@ -85,5 +85,6 @@ ${question}${contextBlock}${optionsBlock}${leaningBlock}${clarifBlock}
 - 问题轻松时（如日常吃喝穿戴选择），发言也要轻松短促，不要把每个选择都升级为人生哲学；用一两句直觉判断即可。
 - 必须先完整输出 \`<discussion>...</discussion>\` 块，再紧接着输出 \`<conclusions>...</conclusions>\` 块；两个块都必须闭合，缺一不可。
 - conclusions 必须是严格 JSON 数组，不要用 markdown 代码块包裹，不要用自然语言列表代替。
+- conclusions 的 JSON 字符串值内部禁止出现未转义的英文双引号 \`"\`；需要引用词语时一律用中文引号「」。
 - conclusions 数组每个对象的 \`advisorId\` 必须严格使用上方人物列表标题里 id: 后面的字符串，区分大小写。`;
 }

@@ -105,6 +105,25 @@ describe('parseCouncilStream', () => {
     expect(r.cards).toHaveLength(1);
   });
 
+  it('repairs unescaped inner double quotes in conclusions JSON (glm-5.2 实测样式)', () => {
+    // 实测：glm-5.2 在字符串值内部输出未转义英文双引号（"先列出"什么会逼我亏钱"，再…"），
+    // JSON.parse 直接炸 → cards 永远 null → UI 卡在"讨论中"。parser 应定向修复后重试。
+    const text = `<discussion>
+芒格: 先别死，再说别的。
+</discussion>
+
+<conclusions>
+[
+  {"advisorId":"munger","characterName":"查理·芒格","conclusion":"留足现金","reasoning":"先列出"什么会逼我亏钱"，再逐条堵死，而不是直接想怎么赚。","mentalModels":[{"name":"逆向思考","briefOfUsage":"先问"这事怎么会失败"，倒着推。"}]}
+]
+</conclusions>`;
+    const r = parseCouncilStream(text);
+    expect(r.cards).not.toBeNull();
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards![0].reasoning).toContain('什么会逼我亏钱');
+    expect(r.cards![0].mentalModels[0].briefOfUsage).toContain('这事怎么会失败');
+  });
+
   it('falls back gracefully when speaker is unknown (keeps original name)', () => {
     const text = `<discussion>
 路人甲: 我是谁
