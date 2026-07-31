@@ -3,6 +3,7 @@ import { errorResponse, normalizeError } from './_shared/errors';
 import { councilRequestSchema } from './_shared/schemas';
 import { createStreamedResponse } from './_shared/sse';
 import { openCouncilStream } from './_shared/council-run';
+import { isChainExhaustedError, notifyPoolExhausted } from './_shared/pool-alert';
 
 // 2026-07-24 实测翻案：hkg1 → DashScope 大陆端点连接挂起 >60s（拿不到
 // response headers，meta 都发不出），而美西出口直连同端点 1s 返回首包。
@@ -48,6 +49,7 @@ export default async function handler(req: Request): Promise<Response> {
       }
       write('done', { fullText });
     } catch (err) {
+      if (isChainExhaustedError(err)) await notifyPoolExhausted();
       const e = normalizeError(err);
       write('error', e);
     }

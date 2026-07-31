@@ -40,6 +40,11 @@ import {
   kvSetJson,
   KvError,
 } from '../api/_shared/kv';
+import {
+  isChainExhaustedError,
+  notifyPoolExhausted,
+  rememberOwnerOpenId,
+} from '../api/_shared/pool-alert';
 
 const SHARE_TTL_SECONDS = 60 * 60 * 24 * 90;
 // Pending selection blob lives for an hour — long enough for a user to
@@ -403,6 +408,16 @@ async function processCouncilDm(
       });
       await patchCard(messageId, errorCard).catch(() => undefined);
     }
+    if (isChainExhaustedError(err)) {
+      // Pool dead is actionable, not transient — alert card (throttled)
+      // plus a pointed reply instead of the generic "retry later".
+      await notifyPoolExhausted(openId);
+      await sendText(
+        openId,
+        '❌ 所有免费模型额度已用完，智囊团暂时无法开会。恢复方法见上方告警卡片。',
+      ).catch(() => undefined);
+      return;
+    }
     await sendText(
       openId,
       `❌ 对不起，军师们正在路上……\n${msg.slice(0, 200)}\n（稍后重试一下）`,
@@ -603,6 +618,9 @@ wsClient.start({
       }
       inflight.add(messageId);
       console.log(`[feishu-worker] event received message_id=${messageId} from=${openId.slice(-6)}`);
+      // Self-learn the owner's openId so web-triggered pool alerts can
+      // reach the user (see pool-alert.ts recipient resolution).
+      void rememberOwnerOpenId(openId);
       try {
         const text = parseTextMessageContent(d.message.content);
         if (text) {

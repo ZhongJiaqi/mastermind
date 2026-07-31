@@ -4,6 +4,7 @@ import { errorResponse, normalizeError } from './_shared/errors';
 import { intakeClarifyRequestSchema } from './_shared/schemas';
 import { buildIntakePrompt } from './_shared/prompts/intake';
 import { tryWithChain } from './_shared/llm-chain';
+import { isChainExhaustedError, notifyPoolExhausted } from './_shared/pool-alert';
 
 // 同 api/council.ts —— 2026-07-24 起 hkg1→DashScope 跨境链路挂起，改钉 sfo1。
 export const config = { runtime: 'edge', regions: ['sfo1'] };
@@ -75,6 +76,7 @@ export default async function handler(req: Request): Promise<Response> {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (err) {
+    if (isChainExhaustedError(err)) await notifyPoolExhausted();
     const e = normalizeError(err);
     return errorResponse(e.code, e.message, 500);
   }

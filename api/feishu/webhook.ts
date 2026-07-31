@@ -113,6 +113,12 @@ async function processCouncilDm(senderOpenId: string, rawQuestion: string): Prom
     import('../_shared/feishu/card'),
     import('../_shared/kv'),
   ]);
+  const { isChainExhaustedError, notifyPoolExhausted, rememberOwnerOpenId } = await import(
+    '../_shared/pool-alert'
+  );
+  // Self-learn the owner's openId so web-triggered pool alerts can reach
+  // the user even though the web surface has no Feishu context.
+  void rememberOwnerOpenId(senderOpenId);
   const { ADVISORS } = advisorsMod;
   const { parseCouncilStream } = parserMod;
   const { runCouncilOnce } = runnerMod;
@@ -144,6 +150,16 @@ async function processCouncilDm(senderOpenId: string, rawQuestion: string): Prom
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[feishu] council run failed', msg);
+    if (isChainExhaustedError(err)) {
+      // Pool dead is not a transient failure — send the actionable alert
+      // card (throttled) instead of the generic "retry later" text.
+      await notifyPoolExhausted(senderOpenId);
+      await sendText(
+        senderOpenId,
+        '❌ 所有免费模型额度已用完，智囊团暂时无法开会。恢复方法见上方告警卡片。',
+      ).catch(() => undefined);
+      return;
+    }
     await sendText(
       senderOpenId,
       `❌ 对不起，军师们正在路上……\n${msg.slice(0, 200)}\n（稍后重试一下）`,
