@@ -61,7 +61,12 @@ export default async function handler(req: Request): Promise<Response> {
           enable_thinking: false,
         } as Parameters<typeof client.chat.completions.create>[0];
 
-        return (await client.chat.completions.create(params, { signal })) as unknown as ChatCompletion;
+        const completion = (await client.chat.completions.create(params, {
+          signal,
+        })) as unknown as ChatCompletion;
+        const content = completion.choices[0]?.message?.content ?? '';
+        if (!content.trim()) throw new Error('LLM returned empty content');
+        return completion;
       },
     );
 

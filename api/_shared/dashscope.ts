@@ -18,8 +18,8 @@ export interface DashScopeModels {
 
 export function getDashScopeModels(): DashScopeModels {
   return {
-    advisor: process.env.MODEL_ADVISOR || 'qwen3-plus',
-    analyzer: process.env.MODEL_SYNTHESIZER || 'qwen3-max',
-    host: process.env.MODEL_HOST || 'qwen3-plus',
+    advisor: process.env.MODEL_ADVISOR || 'deepseek-v4-flash-0731',
+    analyzer: process.env.MODEL_SYNTHESIZER || 'deepseek-v4-flash-0731',
+    host: process.env.MODEL_HOST || 'deepseek-v4-flash-0731',
   };
 }

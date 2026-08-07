@@ -21,9 +21,12 @@ function httpError(status: number, message: string): HttpishError {
 describe('resolveChain', () => {
   beforeEach(() => vi.unstubAllEnvs());
 
-  it('returns just the primary when LLM_MODEL_CHAIN is unset', () => {
+  it('uses the built-in fallback when LLM_MODEL_CHAIN is unset', () => {
     vi.stubEnv('LLM_MODEL_CHAIN', '');
-    expect(resolveChain('qwen3.6-max-preview')).toEqual(['qwen3.6-max-preview']);
+    expect(resolveChain('deepseek-v4-flash-0731')).toEqual([
+      'deepseek-v4-flash-0731',
+      'qwen3.8-max',
+    ]);
   });
 
   it('puts primary first, dedupes, preserves env order', () => {
@@ -36,8 +39,8 @@ describe('resolveChain', () => {
   });
 
   it('uses default primary when caller passes empty string', () => {
-    vi.stubEnv('LLM_MODEL_CHAIN', 'deepseek-v4-pro');
-    expect(resolveChain('')).toEqual(['qwen3.6-max-preview', 'deepseek-v4-pro']);
+    vi.stubEnv('LLM_MODEL_CHAIN', 'qwen3.8-max');
+    expect(resolveChain('')).toEqual(['deepseek-v4-flash-0731', 'qwen3.8-max']);
   });
 
   it('trims and drops blank chain entries', () => {
@@ -131,6 +134,23 @@ describe('tryWithChain', () => {
     expect(out.modelUsed).toBe('deepseek-v4-pro');
     expect(out.result).toBe('ok:deepseek-v4-pro');
     expect(isExhaustedInProcess('qwen3.6-max-preview')).toBe(true);
+  });
+
+  it('falls through when a model returns an empty body and marks it exhausted', async () => {
+    vi.stubEnv('LLM_MODEL_CHAIN', 'qwen3.8-max');
+    const factory = vi.fn(async (model: string) => {
+      if (model === 'deepseek-v4-flash-0731') {
+        throw new Error('LLM returned empty content');
+      }
+      return `ok:${model}`;
+    });
+    const out = await tryWithChain(
+      { taskName: 't', timeoutMs: 1000 },
+      'deepseek-v4-flash-0731',
+      factory,
+    );
+    expect(out).toEqual({ modelUsed: 'qwen3.8-max', result: 'ok:qwen3.8-max' });
+    expect(isExhaustedInProcess('deepseek-v4-flash-0731')).toBe(true);
   });
 
   it('skips models already marked exhausted in-process', async () => {

@@ -11,8 +11,8 @@
 // caller can pipe verbatim; runCouncilOnce() drains the stream and
 // returns { fullText, modelUsed }.
 //
-// Both paths go through tryWithChain so quota fallback (qwen3.6-max
-// → deepseek-v4-pro) works identically.
+// Both paths go through tryWithChain so quota/timeout/empty-content fallback
+// works identically.
 // ======================================================
 
 import type { AdvisorSkill } from '../../src/types/advisor';
@@ -24,9 +24,44 @@ import { tryWithChain } from './llm-chain';
 // of the upstream stream at 60s; consumption is not timed.
 const COUNCIL_TIMEOUT_MS = 60_000;
 
-export type ChatStream = AsyncIterable<{
+export interface ChatChunk {
   choices: Array<{ delta: { content?: string } }>;
-}>;
+}
+
+export type ChatStream = AsyncIterable<ChatChunk>;
+
+/**
+ * Prime a successful HTTP stream until it produces meaningful visible text.
+ * DashScope can return HTTP 200 while emitting only reasoning/empty chunks;
+ * treating that as success would prevent the fallback chain from running.
+ */
+export async function requireContentStream(stream: ChatStream): Promise<ChatStream> {
+  const iterator = stream[Symbol.asyncIterator]();
+  const buffered: ChatChunk[] = [];
+
+  while (true) {
+    const next = await iterator.next();
+    if (next.done) throw new Error('LLM returned empty content');
+    buffered.push(next.value);
+    const text = next.value.choices?.[0]?.delta?.content ?? '';
+    if (text.trim()) break;
+  }
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      try {
+        yield* buffered;
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) return;
+          yield next.value;
+        }
+      } finally {
+        await iterator.return?.();
+      }
+    },
+  };
+}
 
 export interface CouncilParams {
   advisors: AdvisorSkill[];
@@ -77,9 +112,10 @@ export async function openCouncilStream(
         enable_thinking: false,
       } as Parameters<typeof client.chat.completions.create>[0];
 
-      return (await client.chat.completions.create(reqParams, {
+      const stream = (await client.chat.completions.create(reqParams, {
         signal,
       })) as unknown as ChatStream;
+      return requireContentStream(stream);
     },
   );
 

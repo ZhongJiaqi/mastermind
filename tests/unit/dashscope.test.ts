@@ -34,8 +34,8 @@ describe('getDashScopeModels', () => {
   it('falls back to defaults when env not set', () => {
     vi.unstubAllEnvs();
     const models = getDashScopeModels();
-    expect(models.advisor).toBe('qwen3-plus');
-    expect(models.analyzer).toBe('qwen3-max');
-    expect(models.host).toBe('qwen3-plus');
+    expect(models.advisor).toBe('deepseek-v4-flash-0731');
+    expect(models.analyzer).toBe('deepseek-v4-flash-0731');
+    expect(models.host).toBe('deepseek-v4-flash-0731');
   });
 });

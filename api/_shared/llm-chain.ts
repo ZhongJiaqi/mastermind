@@ -7,8 +7,8 @@
 //   - Per-process in-memory exhaustion cache (Map<modelId, untilTs>)
 //   - 60s per-model timeout via AbortController
 //   - 3x exponential retry on transient 5xx / 429
-//   - Auto-fallback to next model only on quota exhaustion (429 / 403
-//     + free-tier signal). Non-quota errors bubble immediately.
+//   - Auto-fallback on quota exhaustion, open timeout, or empty content.
+//     Other non-quota errors bubble immediately.
 //
 // Streaming-safe: the factory passed to tryWithChain receives an
 // AbortSignal that only fires before the factory resolves. Once it
@@ -26,7 +26,8 @@ export interface ChainResult<T> {
   result: T;
 }
 
-const DEFAULT_PRIMARY = 'qwen3.6-max-preview';
+const DEFAULT_PRIMARY = 'deepseek-v4-flash-0731';
+const DEFAULT_FALLBACKS = ['qwen3.8-max'];
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 function trimOrEmpty(value: string | undefined): string {
@@ -38,7 +39,7 @@ export function resolveChain(primaryFromCaller?: string): string[] {
   const raw = trimOrEmpty(process.env.LLM_MODEL_CHAIN);
   const extras = raw
     ? raw.split(',').map((s) => s.trim()).filter(Boolean)
-    : [];
+    : DEFAULT_FALLBACKS;
 
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -83,6 +84,10 @@ export function isQuotaExhaustionError(err: unknown): boolean {
   );
 }
 
+function isEmptyContentError(err: unknown): boolean {
+  return toErrText(err).toLowerCase().includes('returned empty content');
+}
+
 function shouldRetry(err: unknown): boolean {
   // AbortError (per-call timeout) is not worth retrying — fallback to next model instead.
   if (err && typeof err === 'object' && (err as { name?: string }).name === 'AbortError') {
@@ -90,7 +95,7 @@ function shouldRetry(err: unknown): boolean {
   }
   // Quota errors (429 / 403 + free-tier signal) won't recover within a retry
   // window. Fall through to the next model immediately — interactive UX.
-  if (isQuotaExhaustionError(err)) return false;
+  if (isQuotaExhaustionError(err) || isEmptyContentError(err)) return false;
   const status = errStatus(err);
   if (typeof status !== 'number') return true; // network / unknown
   return status >= 500;
@@ -201,6 +206,14 @@ export async function tryWithChain<T>(
         markExhaustedInProcess(model);
         console.warn(
           `[${ctx.taskName}] LLM ${model} exhausted (status=${errStatus(err)}), trying next`,
+        );
+        continue;
+      }
+
+      if (isEmptyContentError(err)) {
+        markExhaustedInProcess(model);
+        console.warn(
+          `[${ctx.taskName}] LLM ${model} returned empty content, trying next`,
         );
         continue;
       }
